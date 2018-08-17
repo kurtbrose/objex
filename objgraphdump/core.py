@@ -82,6 +82,7 @@ class _Writer(object):
         total = time.time() - start
         self.times.extend([total / len(params)] * len(params))
 
+    @profile
     def _ensure_db_id(self, obj):
         if id(obj) in self.object_id_map:
             return self.object_id_map[id(obj)]
@@ -114,6 +115,7 @@ class _Writer(object):
                 (obj_type_id, type_id, obj.__name__))
         return obj_id
 
+    @profile
     def _add_referrers(self, obj):
         src_keys = []
         db_id = self._ensure_db_id(obj)
@@ -148,6 +150,7 @@ class _Writer(object):
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
             [(self._ensure_db_id(src), db_id, key) for src, key in src_keys])
 
+    @profile
     def _add_referents(self, obj):
         '''
         obj is something that is tracked by gc
@@ -168,7 +171,9 @@ class _Writer(object):
         # STEP 2 - GET KEYS
         if mode == "dict":
             keys = obj.keys()
-            key_dst += [('<key>', key) for key in keys] + [(repr(key), obj[key]) for key in keys]
+            key_dst += [('<key>', key) for key in keys] + [
+                ('<object@' + str(self._ensure_db_id(key)) + '>', 
+                 obj[key]) for key in keys]
         if mode == "list":
             key_dst += enumerate(obj)
         if mode == "object":
