@@ -1,4 +1,5 @@
 import gc
+import resource
 import sys
 import sqlite3
 import time
@@ -51,10 +52,11 @@ class _Writer(object):
         self.times = []
 
     @classmethod
-    def from_path(cls, path):
+    def from_path(cls, path, use_wal=True):
         '''create a new instance that will dump state to path (which shouldn't exist)'''
         conn = sqlite3.connect(path)
-        conn.execute("PRAGMA journal_mode = WAL")
+        if use_wal:
+            conn.execute("PRAGMA journal_mode = WAL")
         for ddl_stmt in _SCHEMA.split(';'):
             ddl_stmt = ddl_stmt.strip()
             if ddl_stmt:
@@ -145,6 +147,11 @@ class _Writer(object):
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
             [(self._ensure_db_id(src), db_id, key) for src, key in src_keys])
 
+    def _add_referents(self, obj):
+        dst_keys = []
+        db_id = self._ensure_db_id(obj)
+        skip_in = False
+
     def add_obj(self, obj):
         '''add an object and references to this graph'''
         self._add_referrers(obj)
@@ -153,18 +160,24 @@ class _Writer(object):
         for obj in gc.get_objects():
             self.add_obj(obj)
 
-    def flush(self):
+    def finish(self):
         self.conn.commit()
+        self.conn.close()
 
 
 def dump_graph(path):
     start = time.time()
     grapher = _Writer.from_path(path)
     grapher.add_all()
-    grapher.flush()
+    grapher.finish()
     duration = time.time() - start
+    memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+    objects = len(gc.get_objects())
+    print "process memory usage: {:0.3f}MiB".format(memory)
+    print "total objects:", objects
     print "wrote {} rows in {}".format(len(grapher.times), duration)
-    print "db perf: {0:3f}ms/row".format(1000 * sum(grapher.times) / len(grapher.times))
+    print "db perf: {:0.3f}us/row".format(1e6 * sum(grapher.times) / len(grapher.times))
+    print "overall perf: {:0.3f} s/GiB, {:0.03f} ms/object".format(1024 * duration / memory, 1000 * duration / objects)
     print "duration - db time:", duration - sum(grapher.times)
 
 

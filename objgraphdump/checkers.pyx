@@ -1,5 +1,8 @@
 
 def find_in_tuple_or_list(obj, container):
+    '''
+    returns iterator over all of the instances of obj in container
+    '''
     cdef list list_container
     cdef tuple tuple_container
     cdef int i
@@ -17,3 +20,27 @@ def find_in_tuple_or_list(obj, container):
         for i in range(len(container)):
             if container[i] is obj:
                 yield i
+
+def get_keys_dst(obj, list referents):
+    '''
+    given an object and things that it refers to,
+    return [(key, dst), (key, dst), ....]
+    '''
+    if type(obj) in (list, tuple):
+        return enumerate(obj)
+    if type(obj) is dict:
+        return get_dict_keys_dst(<dict>obj, referents)
+
+
+
+
+cdef get_dict_keys_dst(dict obj, list referents):
+    for ref in referents:
+        for key in obj:
+            if ref is key:
+                yield ('<key>', ref)
+            if obj[key] is ref:
+                yield (repr(key), ref)
+        
+
+
