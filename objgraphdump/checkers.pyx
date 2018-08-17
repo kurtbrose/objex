@@ -26,10 +26,15 @@ def get_keys_dst(obj, list referents):
     given an object and things that it refers to,
     return [(key, dst), (key, dst), ....]
     '''
+    cdef list results
     if type(obj) in (list, tuple):
         return enumerate(obj)
     if type(obj) is dict:
         return get_dict_keys_dst(<dict>obj, referents)
+    results = []
+    if hasattr(obj, '__dict__'):
+        obj.__dict__.keys():
+            results.append(('<key>', ))
 
 
 
@@ -41,6 +46,3 @@ cdef get_dict_keys_dst(dict obj, list referents):
                 yield ('<key>', ref)
             if obj[key] is ref:
                 yield (repr(key), ref)
-        
-
-

@@ -1,4 +1,5 @@
 import gc
+import os
 import resource
 import sys
 import sqlite3
@@ -148,13 +149,46 @@ class _Writer(object):
             [(self._ensure_db_id(src), db_id, key) for src, key in src_keys])
 
     def _add_referents(self, obj):
-        dst_keys = []
+        '''
+        obj is something that is tracked by gc
+        '''
         db_id = self._ensure_db_id(obj)
-        skip_in = False
+        key_dst = []
+        mode = "object"
+        t = type(obj)
+        # STEP 1 - FIGURE OUT WHICH MODE TO USE
+        if t is dict:
+            mode = "dict"
+        elif t is list or t is tuple:
+            mode = "list"
+        elif isinstance(obj, dict):
+            mode = "dict"
+        elif isinstance(obj, (list, tuple)):
+            mode = "list"
+        # STEP 2 - GET KEYS
+        if mode == "dict":
+            keys = obj.keys()
+            key_dst += [('<key>', key) for key in keys] + [(repr(key), obj[key]) for key in keys]
+        if mode == "list":
+            key_dst += enumerate(obj)
+        if mode == "object":
+            if hasattr(obj, "__dict__"):
+                key_dst += obj.__dict__.items()
+            try:
+                slots = obj.__class__.__slots__
+            except AttributeError:
+                slots = ()
+            for key in slots:
+                if key != '__dict__':
+                    key_dst.append((key, getattr(obj, key)))
+        self.conn.executemany(
+            "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
+            [(db_id, self._ensure_db_id(dst), key) for key, dst in key_dst])
 
     def add_obj(self, obj):
         '''add an object and references to this graph'''
-        self._add_referrers(obj)
+        self._add_referrers(obj)  # things that point at obj
+        self._add_referents(obj)  # things that obj points at
 
     def add_all(self):
         for obj in gc.get_objects():
@@ -171,14 +205,20 @@ def dump_graph(path):
     grapher.add_all()
     grapher.finish()
     duration = time.time() - start
-    memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+    memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0  # MiB
+    dumpsize = os.stat(path).st_size / 1024.0 / 1024  # MiB
     objects = len(gc.get_objects())
     print "process memory usage: {:0.3f}MiB".format(memory)
     print "total objects:", objects
-    print "wrote {} rows in {}".format(len(grapher.times), duration)
-    print "db perf: {:0.3f}us/row".format(1e6 * sum(grapher.times) / len(grapher.times))
-    print "overall perf: {:0.3f} s/GiB, {:0.03f} ms/object".format(1024 * duration / memory, 1000 * duration / objects)
+    print "wrote {} rows in {}".format(
+        len(grapher.times), duration)
+    print "db perf: {:0.3f}us/row".format(
+        1e6 * sum(grapher.times) / len(grapher.times))
+    print "overall perf: {:0.3f} s/GiB, {:0.03f} ms/object".format(
+        1024 * duration / memory, 1000 * duration / objects)
     print "duration - db time:", duration - sum(grapher.times)
+    print "compression - {:0.02f}MiB -> {:0.02f}MiB ({:0.01f}%)".format(
+        memory, dumpsize, 100 * (1 - dumpsize / memory))
 
 
 class Reader(object):
