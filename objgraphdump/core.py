@@ -82,7 +82,6 @@ class _Writer(object):
         total = time.time() - start
         self.times.extend([total / len(params)] * len(params))
 
-    @profile
     def _ensure_db_id(self, obj):
         if id(obj) in self.object_id_map:
             return self.object_id_map[id(obj)]
@@ -115,42 +114,6 @@ class _Writer(object):
                 (obj_type_id, type_id, obj.__name__))
         return obj_id
 
-    @profile
-    def _add_referrers(self, obj):
-        src_keys = []
-        db_id = self._ensure_db_id(obj)
-        for ref in gc.get_referrers(obj):
-            if ref is self.object_id_map or ref is self.type_id_map:
-                continue
-            if isinstance(ref, dict):
-                src_keys.extend(_dict_rel(obj, ref))
-            elif isinstance(ref, (list, tuple)):
-                for idx in checkers.find_in_tuple_or_list(obj, ref):
-                    src_keys.append((ref, str(idx)))
-            elif type(ref) is types.FrameType:
-                frames_ref = dict(ref.f_locals)
-                frames_ref.update(ref.f_globals)
-                src_keys.extend(_dict_rel(obj, frames_ref))
-            elif type(ref) is types.MethodType:
-                src_keys.extend(_dict_rel(
-                    obj,
-                    {
-                        "im_class": ref.im_class,
-                        "im_func": ref.im_func,
-                        "im_self": ref.im_self
-                    }
-                ))
-            elif hasattr(ref, '__dict__'):
-                src_keys.extend(_dict_rel(obj, ref.__dict__))
-            if type(ref) is obj:
-                src_keys.append((ref, '__class__'))
-        if not src_keys:
-            return
-        self.conn.executemany(
-            "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
-            [(self._ensure_db_id(src), db_id, key) for src, key in src_keys])
-
-    @profile
     def _add_referents(self, obj):
         '''
         obj is something that is tracked by gc
@@ -192,7 +155,7 @@ class _Writer(object):
 
     def add_obj(self, obj):
         '''add an object and references to this graph'''
-        self._add_referrers(obj)  # things that point at obj
+        #self._add_referrers(obj)  # things that point at obj
         self._add_referents(obj)  # things that obj points at
 
     def add_all(self):
@@ -236,6 +199,3 @@ class Reader(object):
 
     def get_reference_count(self):
         return self.conn.execute('SELECT count(*) FROM reference').fetchall()[0][0]
-
-
-dump_graph('t23.db')
