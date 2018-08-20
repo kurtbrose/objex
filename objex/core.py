@@ -145,7 +145,8 @@ class _Writer(object):
             except AttributeError:
                 slots = ()
             for key in slots:
-                if key == '__dict__':
+                if key in ('__dict__', '__weakref__'):
+                    # see https://docs.python.org/3/reference/datamodel.html#slots
                     continue
                 if key.startswith('__'):  # private slots name mangling
                     key = "_" + obj.__class__.__name__ + key
