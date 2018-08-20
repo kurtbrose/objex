@@ -145,8 +145,11 @@ class _Writer(object):
             except AttributeError:
                 slots = ()
             for key in slots:
-                if key != '__dict__':
-                    key_dst.append((key, getattr(obj, key)))
+                if key == '__dict__':
+                    continue
+                if key.startswith('__'):  # private slots name mangling
+                    key = "_" + obj.__class__.__name__ + key
+                key_dst.append((key, getattr(obj, key)))
         self.conn.executemany(
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
             [(db_id, self._ensure_db_id(dst), key) for key, dst in key_dst])
