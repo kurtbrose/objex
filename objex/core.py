@@ -1,6 +1,9 @@
 import gc
 import os
-import resource
+try:
+    import resource
+except ImportError:  # windows
+    resource = None
 import sys
 from socket import getfqdn
 import sqlite3
@@ -37,6 +40,14 @@ CREATE TABLE reference (
     ref TEXT NOT NULL -- keys *might* be okay
 );
 '''
+
+
+def _get_memory_mb():
+    if resource:
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+    # windows, fall back to psutil
+    import psutil
+    return psutil.Process().memory_info()[0] / 1024.0 / 1024
 
 
 def _dict_rel(obj, ref):
@@ -81,7 +92,7 @@ class _Writer(object):
             (sys.getsizeof(type),))
         conn.execute(
             "INSERT INTO pytype (id, object, name) VALUES (0, 0, 'type')")
-        memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0  # MiB
+        memory = _get_memory_mb()
         conn.execute(
             "INSERT INTO meta (id, pid, hostname, memory_mb) VALUES (0, ?, ?, ?)",
             (os.getpid(), getfqdn(), memory))
@@ -188,7 +199,7 @@ class _Writer(object):
     def finish(self):
         self.conn.execute(
             "UPDATE meta SET duration_s = ?",
-            (time.time() - self.start,))
+            (time.time() - self.started,))
         self.conn.commit()
         self.conn.close()
 
@@ -200,18 +211,19 @@ def dump_graph(path, print_info=False):
     grapher.finish()
     if print_info:
         duration = time.time() - start
-        memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0  # MiB
+        memory = _get_memory_mb() 
         dumpsize = os.stat(path).st_size / 1024.0 / 1024  # MiB
         objects = len(gc.get_objects())
         print "process memory usage: {:0.3f}MiB".format(memory)
         print "total objects:", objects
-        print "wrote {} rows in {}".format(
-            len(grapher.times), duration)
-        print "db perf: {:0.3f}us/row".format(
-            1e6 * sum(grapher.times) / len(grapher.times))
-        print "overall perf: {:0.3f} s/GiB, {:0.03f} ms/object".format(
-            1024 * duration / memory, 1000 * duration / objects)
-        print "duration - db time:", duration - sum(grapher.times)
+        # print "wrote {} rows in {}".format(
+        #     len(grapher.times), duration)
+        # print "db perf: {:0.3f}us/row".format(
+        #     1e6 * sum(grapher.times) / len(grapher.times))
+        # print "overall perf: {:0.3f} s/GiB, {:0.03f} ms/object".format(
+        #     1024 * duration / memory, 1000 * duration / objects)
+        # print "duration - db time:", duration - sum(grapher.times)
+        print "duration: {0:0.1f}".format(time.time() - grapher.started)
         print "compression - {:0.02f}MiB -> {:0.02f}MiB ({:0.01f}%)".format(
             memory, dumpsize, 100 * (1 - dumpsize / memory))
 
