@@ -6,8 +6,6 @@ import sqlite3
 import time
 import types
 
-from . import checkers
-
 
 _SCHEMA = '''
 CREATE TABLE pytype (

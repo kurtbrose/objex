@@ -1,1 +1,1 @@
-from .core import dump_graph
+from .core import dump_graph, Reader
