@@ -2,12 +2,22 @@ import gc
 import os
 import resource
 import sys
+from socket import getfqdn
 import sqlite3
 import time
 import types
 
 
 _SCHEMA = '''
+CREATE TABLE meta (
+    id INTEGER PRIMARY KEY,
+    ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    pid INTEGER NOT NULL,
+    hostname TEXT NOT NULL,
+    memory_mb INTEGER NOT NULL,
+    duration_s REAL
+);
+
 CREATE TABLE pytype (
     id INTEGER PRIMARY KEY,
     object INTEGER NOT NULL,
@@ -48,7 +58,11 @@ class _Writer(object):
         self.conn = conn
         self.type_id_map = type_id_map
         self.object_id_map = object_id_map
-        self.times = []
+        self.started = time.time()
+        # commented out tracing code
+        # TODO how to put it in w/out hurting perf if off?
+        # (maybe optional decorators?)
+        # self.times = []
 
     @classmethod
     def from_path(cls, path, use_wal=True):
@@ -67,18 +81,22 @@ class _Writer(object):
             (sys.getsizeof(type),))
         conn.execute(
             "INSERT INTO pytype (id, object, name) VALUES (0, 0, 'type')")
+        memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0  # MiB
+        conn.execute(
+            "INSERT INTO meta (id, pid, hostname, memory_mb) VALUES (0, ?, ?, ?)",
+            (os.getpid(), getfqdn(), memory))
         return cls(conn, type_id_map, object_id_map)
 
     def execute(self, sql, params):
-        start = time.time()
+        # start = time.time()
         self.conn.execute(sql, params)
-        self.times.append(time.time() - start)
+        # self.times.append(time.time() - start)
 
     def executemany(self, sql, params):
-        start = time.time()
+        # start = time.time()
         self.conn.executemany(sql, params)
-        total = time.time() - start
-        self.times.extend([total / len(params)] * len(params))
+        # total = time.time() - start
+        # self.times.extend([total / len(params)] * len(params))
 
     def _ensure_db_id(self, obj):
         if id(obj) in self.object_id_map:
@@ -150,7 +168,10 @@ class _Writer(object):
                     continue
                 if key.startswith('__'):  # private slots name mangling
                     key = "_" + obj.__class__.__name__ + key
-                key_dst.append((key, getattr(obj, key)))
+                try:
+                    key_dst.append((key, getattr(obj, key)))
+                except AttributeError:
+                    pass  # just because a slot exists doesn't mean it has a value
         self.conn.executemany(
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
             [(db_id, self._ensure_db_id(dst), key) for key, dst in key_dst])
@@ -165,30 +186,34 @@ class _Writer(object):
             self.add_obj(obj)
 
     def finish(self):
+        self.conn.execute(
+            "UPDATE meta SET duration_s = ?",
+            (time.time() - self.start,))
         self.conn.commit()
         self.conn.close()
 
 
-def dump_graph(path):
+def dump_graph(path, print_info=False):
     start = time.time()
     grapher = _Writer.from_path(path)
     grapher.add_all()
     grapher.finish()
-    duration = time.time() - start
-    memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0  # MiB
-    dumpsize = os.stat(path).st_size / 1024.0 / 1024  # MiB
-    objects = len(gc.get_objects())
-    print "process memory usage: {:0.3f}MiB".format(memory)
-    print "total objects:", objects
-    print "wrote {} rows in {}".format(
-        len(grapher.times), duration)
-    print "db perf: {:0.3f}us/row".format(
-        1e6 * sum(grapher.times) / len(grapher.times))
-    print "overall perf: {:0.3f} s/GiB, {:0.03f} ms/object".format(
-        1024 * duration / memory, 1000 * duration / objects)
-    print "duration - db time:", duration - sum(grapher.times)
-    print "compression - {:0.02f}MiB -> {:0.02f}MiB ({:0.01f}%)".format(
-        memory, dumpsize, 100 * (1 - dumpsize / memory))
+    if print_info:
+        duration = time.time() - start
+        memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0  # MiB
+        dumpsize = os.stat(path).st_size / 1024.0 / 1024  # MiB
+        objects = len(gc.get_objects())
+        print "process memory usage: {:0.3f}MiB".format(memory)
+        print "total objects:", objects
+        print "wrote {} rows in {}".format(
+            len(grapher.times), duration)
+        print "db perf: {:0.3f}us/row".format(
+            1e6 * sum(grapher.times) / len(grapher.times))
+        print "overall perf: {:0.3f} s/GiB, {:0.03f} ms/object".format(
+            1024 * duration / memory, 1000 * duration / objects)
+        print "duration - db time:", duration - sum(grapher.times)
+        print "compression - {:0.02f}MiB -> {:0.02f}MiB ({:0.01f}%)".format(
+            memory, dumpsize, 100 * (1 - dumpsize / memory))
 
 
 class Reader(object):
