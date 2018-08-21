@@ -1,1 +1,1 @@
-from .core import dump_graph, Reader
+from .core import dump_graph, make_analysis_db, Reader

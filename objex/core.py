@@ -4,6 +4,7 @@ try:
     import resource
 except ImportError:  # windows
     resource = None
+import shutil
 import sys
 from socket import getfqdn
 import sqlite3
@@ -40,6 +41,34 @@ CREATE TABLE reference (
     ref TEXT NOT NULL -- keys *might* be okay
 );
 '''
+
+
+# these indices are applied when switching from
+# "data-collection" mode to "analysis mode"
+_INDICES = '''
+CREATE INDEX pytype_object ON pytype(object);
+CREATE INDEX pytype_name ON pytype(name);
+CREATE INDEX object_pytype ON object(pytype);
+CREATE INDEX object_size ON object(size);
+CREATE INDEX object_len ON object(len);
+CREATE INDEX object_all ON object(pytype, size, len);
+CREATE INDEX reference_src ON reference(src);
+CREATE INDEX reference_dst ON reference(dst);
+CREATE INDEX reference_ref ON reference(ref);
+CREATE INDEX reference_all ON reference(src, dst, ref);
+'''
+
+
+def _run_ddl(conn, ddl_block):
+    """
+    break a ; delimited list of DDL statements into
+    a list of individual statements and execute them
+    in conn
+    """
+    for ddl_stmt in ddl_block.split(';'):
+        ddl_stmt = ddl_stmt.strip()
+        if ddl_stmt:
+            conn.execute(ddl_stmt)
 
 
 def _get_memory_mb():
@@ -81,10 +110,7 @@ class _Writer(object):
         conn = sqlite3.connect(path)
         if use_wal:
             conn.execute("PRAGMA journal_mode = WAL")
-        for ddl_stmt in _SCHEMA.split(';'):
-            ddl_stmt = ddl_stmt.strip()
-            if ddl_stmt:
-                conn.execute(ddl_stmt)
+        _run_ddl(conn, _SCHEMA)
         type_id_map = {type: 0}
         object_id_map = {type: 0}
         conn.execute(
@@ -226,6 +252,23 @@ def dump_graph(path, print_info=False):
         print "duration: {0:0.1f}".format(time.time() - grapher.started)
         print "compression - {:0.02f}MiB -> {:0.02f}MiB ({:0.01f}%)".format(
             memory, dumpsize, 100 * (1 - dumpsize / memory))
+
+
+def make_analysis_db(collection_db_path, analysis_db_path):
+    '''
+    make an analysis SQLite DB from a collection SQLite DB
+    by making a copy and adding indices to make analysis
+    queries faster
+    '''
+    if not os.path.exists(collection_db_path):
+        raise EnvironmentError(
+            "collection DB doesn't exist at {}".format(collection_db_path))
+    if os.path.exists(analysis_db_path):
+        raise EnvironmentError(
+            "analysis DB already exists at {}".format(analysis_db_path))
+    shutil.copyfile(collection_db_path, analysis_db_path)
+    conn = sqlite3.connect(analysis_db_path)
+    _run_ddl(conn, _INDICES)
 
 
 class Reader(object):
