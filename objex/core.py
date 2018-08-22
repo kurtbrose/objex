@@ -276,8 +276,27 @@ class Reader(object):
     def __init__(self, path):
         self.conn = sqlite3.connect(path)
 
-    def get_object_count(self):
-        return self.conn.execute('SELECT count(*) FROM object').fetchall()[0][0]
+    def sql(self, sql):
+        '''run SELECT sql against underling DB'''
+        return self.conn.execute(sql).fetchall()
 
-    def get_reference_count(self):
-        return self.conn.execute('SELECT count(*) FROM reference').fetchall()[0][0]
+    def sql_val(self, sql):
+        '''run SELECT sql that returns single value'''
+        return self.sql(sql)[0][0]
+
+    def object_count(self):
+        return self.sql_val('SELECT count(*) FROM object')
+
+    def reference_count(self):
+        return self.sql_val('SELECT count(*) FROM reference')
+
+    def visible_memory_fraction(self):
+        '''get the fraction of peak RSS that is accounted for'''
+        return self.sql_val(
+            'SELECT 1.0 * sum(size) / 1000000 / (SELECT memory_mb from meta) FROM object, meta')
+
+    def cost_by_type(self):
+        '''get (typename, percent memory, number of instances) ordered by percent memory'''
+        return self.sql(
+            'SELECT name, count(*), 100 * sum(size) / (1.0 * (SELECT sum(size) FROM object))'
+            'FROM object JOIN pytype ON object.pytype = pytype.id GROUP BY name ORDER BY sum(size) DESC')
