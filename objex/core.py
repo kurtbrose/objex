@@ -274,15 +274,18 @@ def make_analysis_db(collection_db_path, analysis_db_path):
 class Reader(object):
     '''read a graph dumped previously'''
     def __init__(self, path):
+        self.path = path
         self.conn = sqlite3.connect(path)
 
-    def sql(self, sql):
+    def sql(self, sql, args=None):
         '''run SELECT sql against underling DB'''
-        return self.conn.execute(sql).fetchall()
+        if args is None:
+            return self.conn.execute(sql).fetchall()
+        return self.conn.execute(sql, args).fetchall()
 
-    def sql_val(self, sql):
+    def sql_val(self, sql, args=None):
         '''run SELECT sql that returns single value'''
-        return self.sql(sql)[0][0]
+        return self.sql(sql, args)[0][0]
 
     def object_count(self):
         return self.sql_val('SELECT count(*) FROM object')
@@ -300,3 +303,167 @@ class Reader(object):
         return self.sql(
             'SELECT name, count(*), 100 * sum(size) / (1.0 * (SELECT sum(size) FROM object))'
             'FROM object JOIN pytype ON object.pytype = pytype.id GROUP BY name ORDER BY sum(size) DESC')
+
+    def as_digraph(self):
+        '''return an obj-id -> obj-id networkx DiGraph'''
+        from networkx import DiGraph
+        return DiGraph(self.conn.execute('SELECT src, dst FROM reference').fetchall())
+
+    def obj_typename(self, obj_id):
+        '''given an object id, return typename'''
+        return self.sql_val(
+            'SELECT name FROM object JOIN pytype ON object.pytype = pytype.id WHERE object.id = ?',
+            (obj_id,))
+
+    def obj_size(self, obj_id):
+        return self.sql_val('SELECT size FROM object WHERE id = ?', (obj_id,))
+
+    def obj_len(self, obj_id):
+        return self.sql_val('SELECT len FROM object WHERE id = ?', (obj_id,))
+
+    def obj_refers_to(self, obj_id, limit=20):
+        '''given obj-id, return [(ref, obj-id), ...] for all of the objects this obj refers to'''
+        return self.sql('SELECT ref, dst FROM reference WHERE src = ? LIMIT ?', (obj_id, limit))
+
+    def obj_refers_to_count(self, obj_id):
+        return self.sql_val('SELECT count(*) FROM reference WHERE src = ?', (obj_id,))
+
+    def refers_to_obj(self, obj_id, limit=20):
+        '''given obj-id, return [(ref, obj-id), ...] for all of the objects that refer to this obj'''
+        return self.sql('SELECT ref, src FROM reference WHERE dst = ? LIMIT ?', (obj_id, limit))
+
+    def refers_to_obj_count(self, obj_id):
+        return self.sql_val('SELECT count(*) FROM reference WHERE dst = ?', (obj_id,))
+
+    def obj_is_type(self, obj_id):
+        return self.sql_val('SELECT EXISTS(SELECT 1 FROM pytype WHERE pytype.object = ?)', (obj_id,))
+
+    def typename(self, obj_id):
+        '''name of an object that IS a type'''
+        return self.sql_val('SELECT name FROM pytype WHERE object = ?', (obj_id,))
+
+    def obj_instances(self, obj_id, limit=20):
+        return sum(
+            self.sql(
+                'SELECT id FROM object WHERE object.pytype = ('
+                'SELECT id FROM pytype WHERE pytype.object = ?) LIMIT ?',
+                (obj_id, limit)),
+            ())
+
+    def obj_instance_count(self, obj_id):
+        return self.sql_val(
+            'SELECT count(*) FROM object WHERE object.pytype = ('
+            'SELECT id FROM pytype WHERE pytype.object= ?)',
+            (obj_id,))
+
+
+def _info_str(reader, obj_id):
+    if reader.obj_is_type(obj_id):
+        return "{label} (instances={num_instances:,})".format(
+            label=_obj_label(reader, obj_id),
+            obj_id=obj_id,
+            num_instances=reader.obj_instance_count(obj_id),
+        )
+    return '''{label} (size={size}, len={len})'''.format(
+        label=_obj_label(reader, obj_id),
+        obj_id=obj_id,
+        size=reader.obj_size(obj_id),
+        len=reader.obj_len(obj_id))
+
+
+try:
+    import colorama
+except ImportError:
+    pass
+else:
+    colorama.init()
+
+
+def _obj_label(reader, obj_id):
+    try:
+        from termcolor import colored
+    except ImportError:
+        colored = lambda s, color: s
+
+    if reader.obj_is_type(obj_id):
+        return colored("<type {}@{}>".format(reader.typename(obj_id), obj_id), 'green')
+    return colored("<{}@{}>".format(reader.obj_typename(obj_id), obj_id), 'red')
+
+
+class CLI(object):
+    def __init__(self, reader, obj_id=0):
+        self.reader = reader
+        self.obj_id = obj_id
+
+    def _menu(self):
+        try:
+            from termcolor import colored
+        except ImportError:
+            colored = lambda s, color: s
+
+        label = _obj_label(self.reader, self.obj_id)
+        refers_to_obj = []
+        i = 0
+        for ref, src in self.reader.refers_to_obj(self.obj_id):
+            refers_to_obj.append('({}) - {}: {}'.format(
+                i, ref, _info_str(self.reader, src)))
+            i += 1
+        obj_refers_to = []
+        for ref, dst in self.reader.obj_refers_to(self.obj_id):
+            obj_refers_to.append('({}) - {}: {}'.format(
+                i, ref, _info_str(self.reader, dst)))
+            i += 1
+        lines = [
+            "CUR: {}".format(_info_str(self.reader, self.obj_id)),
+            "{:,} objects refer to {}...".format(
+                self.reader.refers_to_obj_count(self.obj_id),
+                label)
+        ] + refers_to_obj + [
+            "{} refers to {:,} objects...".format(
+                label,
+                self.reader.obj_refers_to_count(self.obj_id))
+        ] + obj_refers_to
+        if self.reader.obj_is_type(self.obj_id):
+            instances = []
+            for inst in self.reader.obj_instances(self.obj_id):
+                instances.append('({}) - {}'.format(i, _info_str(self.reader, inst)))
+                i += 1
+            lines += [
+                '{} has {:,} instances...'.format(
+                    label,
+                    self.reader.obj_instance_count(self.obj_id))
+            ] + instances
+        return '\n'.join(lines)
+
+    def _choices(self):
+        '''return choices to go to as a dict'''
+        choices = {}
+        i = 0
+        for ref, src in self.reader.refers_to_obj(self.obj_id):
+            choices[str(i)] = src
+            i += 1
+        for ref, dst in self.reader.obj_refers_to(self.obj_id):
+            choices[str(i)] = dst
+            i += 1
+        if self.reader.obj_is_type(self.obj_id):
+            for inst in self.reader.obj_instances(self.obj_id):
+                choices[str(i)] = inst
+                i += 1
+        return choices
+
+    def run(self):
+        print("WELCOME TO OBJECT BROWSER")
+        print("you are browsing {} collected from {} at {}".format(
+            self.reader.path,
+            self.reader.sql_val('SELECT hostname FROM meta'),
+            self.reader.sql_val('SELECT ts FROM meta'),
+        ))
+        print("total RSS memory was {}MiB; {:0.01f}MiB ({:0.01f}%) found in {:,} python objects".format(
+            self.reader.sql_val('SELECT memory_mb FROM meta'),
+            self.reader.sql_val('SELECT SUM(size) FROM object') / 1024 / 1024,
+            self.reader.visible_memory_fraction() * 100,
+            self.reader.object_count(),
+        ))
+        while 1:
+            print(self._menu())
+            self.obj_id = self._choices()[raw_input("GO TO:")]
