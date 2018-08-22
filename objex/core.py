@@ -111,8 +111,8 @@ class _Writer(object):
         if use_wal:
             conn.execute("PRAGMA journal_mode = WAL")
         _run_ddl(conn, _SCHEMA)
-        type_id_map = {type: 0}
-        object_id_map = {type: 0}
+        type_id_map = {id(type): 0}
+        object_id_map = {id(type): 0}
         conn.execute(
             "INSERT INTO object (id, pytype, size, len) VALUES (0, 0, ?, null)",
             (sys.getsizeof(type),))
@@ -135,23 +135,14 @@ class _Writer(object):
         # total = time.time() - start
         # self.times.extend([total / len(params)] * len(params))
 
-    def _ensure_db_id(self, obj):
+    def _ensure_db_id(self, obj, is_type=False):
         if id(obj) in self.object_id_map:
             return self.object_id_map[id(obj)]
         obj_id = self.object_id_map[id(obj)] = len(self.object_id_map)
         if hasattr(obj, '__class__'):
-            type_id = self._ensure_db_id(obj.__class__)
-            if obj.__class__ not in self.type_id_map:
-                # idiom for assigning items of type_id_map positive integers
-                # 0, 1, 2, 3, ...
-                type_type_id = self.type_id_map[obj.__class__] = len(self.type_id_map)
-                self.execute(
-                    "INSERT INTO pytype (id, object, name) VALUES (?, ?, ?)",
-                    (type_type_id, type_id, obj.__class__.__name__))
-            else:
-                type_type_id = self.type_id_map[obj.__class__]
+            type_type_id = self._ensure_db_id(obj.__class__, is_type=True)
         else:  # old-stype class
-            type_type_id = self.type_id_map[type]
+            type_type_id = self.type_id_map[id(type)]
         try:  # very hard to forward detect if this will works
             length = len(obj)
         except Exception:
@@ -160,11 +151,11 @@ class _Writer(object):
             "INSERT INTO object (id, pytype, size, len) VALUES (?, ?, ?, ?)",
             (obj_id, type_type_id, sys.getsizeof(obj), length))
         # just in case a class doesn't have any instances it will still be populated
-        if id(obj) not in self.type_id_map and isinstance(obj, type):
+        if id(obj) not in self.type_id_map and (is_type or isinstance(obj, type)):
             obj_type_id = self.type_id_map[id(obj)] = len(self.type_id_map)
             self.execute(
                 "INSERT INTO pytype (id, object, name) VALUES (?, ?, ?)",
-                (obj_type_id, type_id, obj.__name__))
+                (obj_type_id, obj_id, obj.__name__))
         return obj_id
 
     def _add_referents(self, obj):
