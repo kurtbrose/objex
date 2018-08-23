@@ -146,17 +146,18 @@ class _Writer(object):
     '''
     responsible for dumping objects
     '''
-    def __init__(self, conn, type_id_map, object_id_map):
+    def __init__(self, conn):
         self.conn = conn
-        self.type_id_map = type_id_map
-        self.object_id_map = object_id_map
-        self.type_slots_map = {}
+        self.type_id_map = {}  # map of type ids to pytype rowids
+        self.object_id_map = {}  # map of object ids to object rowids
+        self.type_slots_map = {}  # map of type ids to __slots__
+        self.modules_map = dict(sys.modules)  # map of __module__ to fake modules when no entry in sys.modules
         self.started = time.time()
         # ignore ids not just to avoid analysis noise, but because these can
         # get pretty big over time, don't want to waste DB space
         self.ignore_ids = {id(e) for e in self.__dict__.values()}
         self.ignore_ids.add(id(self.ignore_ids))
-        self.ignore_ids.add(self.__dict__)
+        self.ignore_ids.add(id(self.__dict__))
         # commented out tracing code
         # TODO how to put it in w/out hurting perf if off?
         # (maybe optional decorators?)
@@ -169,18 +170,11 @@ class _Writer(object):
         if use_wal:
             conn.execute("PRAGMA journal_mode = WAL")
         _run_ddl(conn, _SCHEMA)
-        type_id_map = {id(type): 0}
-        object_id_map = {id(type): 0}
-        conn.execute(
-            "INSERT INTO object (id, pytype, size, len) VALUES (0, 0, ?, null)",
-            (sys.getsizeof(type),))
-        conn.execute(
-            "INSERT INTO pytype (id, object, name) VALUES (0, 0, 'type')")
         memory = _get_memory_mb()
         conn.execute(
             "INSERT INTO meta (id, pid, hostname, memory_mb, gc_info) VALUES (0, ?, ?, ?, ?)",
-            (os.getpid(), getfqdn(), memory, ';'.join(gc.get_count())))
-        return cls(conn, type_id_map, object_id_map)
+            (os.getpid(), getfqdn(), memory, '[{},{},{}]'.format(*gc.get_count())))
+        return cls(conn)
 
     def execute(self, sql, params):
         # start = time.time()
@@ -194,6 +188,11 @@ class _Writer(object):
         # self.times.extend([total / len(params)] * len(params))
 
     def _ensure_db_id(self, obj, is_type=False):
+        '''
+        DB id creation is separate from full object creation
+        as a kind of "forward declaration" step to avoid loops
+        (e.g. an object that refers to itself)
+        '''
         if id(obj) in self.object_id_map:
             return self.object_id_map[id(obj)]
         obj_id = self.object_id_map[id(obj)] = len(self.object_id_map)
@@ -208,22 +207,27 @@ class _Writer(object):
         self.execute(
             "INSERT INTO object (id, pytype, size, len) VALUES (?, ?, ?, ?)",
             (obj_id, type_type_id, sys.getsizeof(obj), length))
-        # just in case a class doesn't have any instances it will still be populated
         if id(obj) not in self.type_id_map and (is_type or isinstance(obj, type)):
             obj_type_id = self.type_id_map[id(obj)] = len(self.type_id_map)
+            if obj.__module__ not in self.modules_map:
+                self.modules_map[obj.__module__] = types.ModuleType(obj.__module__)
+            module_obj_id = self._ensure_db_id(self.modules_map[obj.__module__])
             self.execute(
-                "INSERT INTO pytype (id, object, name) VALUES (?, ?, ?)",
-                (obj_type_id, obj_id, obj.__name__))
+                "INSERT INTO pytype (id, object, module, name) VALUES (?, ?, ?, ?)",
+                (obj_type_id, obj_id, module_obj_id, obj.__name__))
         return obj_id
 
     def add_obj(self, obj):
         '''
         add an object and references to this graph
+
+        this funcion is idempotent; i.e. calling it 100x
+        on the same object is the same as calling it once
         '''
-        if id(obj) in self.ignore_ids:
-            return None
-        if id(obj) in self.object_id_map:
-            return self.object_id_map[id(obj)]
+        obj_id = id(obj)
+        if obj_id in self.ignore_ids:
+            return self.object_id_map.get(obj_id)
+        self.ignore_ids.add(obj_id)
         db_id = self._ensure_db_id(obj)
         key_dst = []
         mode = "object"
@@ -269,7 +273,7 @@ class _Writer(object):
 
     def add_all(self):
         gc.collect()  # try to minimize garbage
-        self.add_frames()
+        self.add_obj(type)
         for obj in gc.get_objects():
             self.add_obj(obj)
 
