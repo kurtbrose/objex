@@ -1,4 +1,5 @@
 import gc
+import inspect
 import os
 try:
     import resource
@@ -286,6 +287,10 @@ class _Writer(object):
             mode = "dict"
         elif t is list or t is tuple:
             mode = "list"
+        elif t is types.FrameType:
+            mode = "frame"
+        elif t is types.FunctionType:
+            mode = 'func'
         elif isinstance(obj, dict):
             mode = "dict"
         elif isinstance(obj, (list, tuple)):
@@ -313,6 +318,31 @@ class _Writer(object):
                     key_dst.append((key, getattr(obj, key)))
                 except AttributeError:
                     pass  # just because a slot exists doesn't mean it has a value
+        if mode == 'frame':  # expensive to handle, but pretty rare
+            key_dst += [("locals[{!r}]".format(key), val) for key, val in obj.f_locals.items()]
+            key_dst.append(("f_globals", self._ensure_db_id(obj.f_globals)))
+        if mode == 'func':
+            '''
+            >>> a = 1
+            >>> def b():
+            ...    c = 2
+            ...    def d():
+            ...       e = 3
+            ...       return a + c + 3
+            ...    return d
+            ...
+            >>> b().func_code.co_freevars
+            ('c',)
+            >>> b().func_closure[0].cell_contents
+            2
+            '''
+            if obj.func_closure:  # (maybe) grab function closure
+                for varname, cell in zip(obj.func_code.co_freevars, obj.func_closure):
+                    key_dst.append((varname, self._ensure_db_id(cell.cell_contents)))
+            args, varargs, keywords, defaults = inspect.getargspec(obj)
+            if defaults:  # (maybe) grab function defaults
+                for name, default in zip(reversed(args), reversed(defaults)):
+                    key_dst.append(("defaults[{!r}]".format(name), self._ensure_db_id(default)))
         self.conn.executemany(
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
             [(db_id, self._ensure_db_id(dst), key) for key, dst in key_dst])
