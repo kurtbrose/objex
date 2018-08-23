@@ -474,7 +474,8 @@ class Reader(object):
     def obj_typename(self, obj_id):
         '''given an object id, return typename'''
         return self.sql_val(
-            'SELECT name FROM object JOIN pytype ON object.pytype = pytype.id WHERE object.id = ?',
+            'SELECT name FROM pytype where object = ('
+                'SELECT pytype FROM object WHERE id = ?)',
             (obj_id,))
 
     def obj_size(self, obj_id):
