@@ -146,17 +146,18 @@ class _Writer(object):
     '''
     responsible for dumping objects
     '''
-    def __init__(self, conn, type_id_map, object_id_map):
+    def __init__(self, conn):
         self.conn = conn
-        self.type_id_map = type_id_map
-        self.object_id_map = object_id_map
-        self.type_slots_map = {}
+        self.type_id_map = {}  # map of type ids to pytype rowids
+        self.object_id_map = {}  # map of object ids to object rowids
+        self.type_slots_map = {}  # map of type ids to __slots__
+        self.modules_map = dict(sys.modules)  # map of __module__ to fake modules when no entry in sys.modules
         self.started = time.time()
         # ignore ids not just to avoid analysis noise, but because these can
         # get pretty big over time, don't want to waste DB space
         self.ignore_ids = {id(e) for e in self.__dict__.values()}
         self.ignore_ids.add(id(self.ignore_ids))
-        self.ignore_ids.add(self.__dict__)
+        self.ignore_ids.add(id(self.__dict__))
         # commented out tracing code
         # TODO how to put it in w/out hurting perf if off?
         # (maybe optional decorators?)
@@ -169,18 +170,11 @@ class _Writer(object):
         if use_wal:
             conn.execute("PRAGMA journal_mode = WAL")
         _run_ddl(conn, _SCHEMA)
-        type_id_map = {id(type): 0}
-        object_id_map = {id(type): 0}
-        conn.execute(
-            "INSERT INTO object (id, pytype, size, len) VALUES (0, 0, ?, null)",
-            (sys.getsizeof(type),))
-        conn.execute(
-            "INSERT INTO pytype (id, object, name) VALUES (0, 0, 'type')")
         memory = _get_memory_mb()
         conn.execute(
             "INSERT INTO meta (id, pid, hostname, memory_mb, gc_info) VALUES (0, ?, ?, ?, ?)",
-            (os.getpid(), getfqdn(), memory, ';'.join(gc.get_count())))
-        return cls(conn, type_id_map, object_id_map)
+            (os.getpid(), getfqdn(), memory, '[{},{},{}]'.format(*gc.get_count())))
+        return cls(conn)
 
     def execute(self, sql, params):
         # start = time.time()
@@ -215,10 +209,12 @@ class _Writer(object):
             (obj_id, type_type_id, sys.getsizeof(obj), length))
         if id(obj) not in self.type_id_map and (is_type or isinstance(obj, type)):
             obj_type_id = self.type_id_map[id(obj)] = len(self.type_id_map)
-            self._ensure_db_id()
+            if obj.__module__ not in self.modules_map:
+                self.modules_map[obj.__module__] = types.ModuleType(obj.__module__)
+            module_obj_id = self._ensure_db_id(self.modules_map[obj.__module__])
             self.execute(
                 "INSERT INTO pytype (id, object, module, name) VALUES (?, ?, ?, ?)",
-                (obj_type_id, obj_id, obj.__name__))
+                (obj_type_id, obj_id, module_obj_id, obj.__name__))
         return obj_id
 
     def add_obj(self, obj):
@@ -249,7 +245,7 @@ class _Writer(object):
         if mode == "dict":
             keys = obj.keys()
             key_dst += [('<key>', key) for key in keys] + [
-                ('@{}'.format(self.add_obj(key)), obj[key])
+                ('@{}'.format(self._ensure_db_id(key)), obj[key])
                 for key in keys]
         if mode == "list":
             key_dst += enumerate(obj)
@@ -272,12 +268,12 @@ class _Writer(object):
                     pass  # just because a slot exists doesn't mean it has a value
         self.conn.executemany(
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
-            [(db_id, self.add_obj(dst), key) for key, dst in key_dst])
+            [(db_id, self._ensure_db_id(dst), key) for key, dst in key_dst])
         return db_id
 
     def add_all(self):
         gc.collect()  # try to minimize garbage
-        self.add_frames()
+        self.add_obj(type)
         for obj in gc.get_objects():
             self.add_obj(obj)
 
