@@ -11,12 +11,14 @@ import sqlite3
 import time
 import types
 
+from boltons.tbutils import Callpoint
 
 # MAINTENANCE NOTE: why are some python types "special" and get broken out as
 # their own table type whereas others are not?
 # the guiding principle is that objects which tend to need special display
 # and/or collection logic get separate tables
 
+# TODO: refactor foo to foo_obj_id when it refers to a row in the object table
 _SCHEMA = '''
 CREATE TABLE meta (
     id INTEGER PRIMARY KEY,
@@ -58,13 +60,17 @@ CREATE TABLE module (
 CREATE TABLE pyframe (
     id INTEGER PRIMARY KEY,
     object INTEGER NOT NULL,
-    f_back INTEGER, -- object (pyframe or None)
-    f_code INTEGER NOT NULL, -- object (code)
-    f_globals INTEGER, -- object (a dict instance)  OR should this be a ref type e.g. locals["foo"], globals["bar"]
-    f_locals INTEGER, -- object (a dict instance)
+    f_back_obj_id INTEGER, -- parent pointer in stack
+    f_code_obj_id INTEGER NOT NULL, -- object (code)
     f_lasti INTEGER NOT NULL, -- last instruction executed in code
     f_lineno INTEGER NOT NULL, -- line number in code
     trace TEXT NOT NULL  -- segment of a traceback kind of format (used for display to user)
+);
+
+CREATE TABLE thread (
+    id INTEGER PRIMARY KEY,
+    stack_obj_id INTEGER NOT NULL, -- pyframe top of stack
+    thread_id INTEGER NOT NULL -- os thread id
 );
 
 CREATE TABLE pycode (  -- needed to assocaite pyframes back to function objects
@@ -77,14 +83,8 @@ CREATE TABLE function (
     id INTEGER PRIMARY KEY,
     object INTEGER NOT NULL,
     func_name TEXT NOT NULL,
-    func_code INTEGER NOT NULL, -- object-id of pycode
-    module INTEGER NOT NULL -- object-id of module
-);
-
-CREATE TABLE thread (
-    id INTEGER PRIMARY KEY,
-    stack INTEGER NOT NULL, -- object-id of pyframe
-    thread_id INTEGER NOT NULL -- os-layer thread-id (key of sys._current_frames)
+    func_code_obj_id INTEGER NOT NULL, -- object-id of pycode
+    module_obj_id INTEGER NOT NULL -- object-id of module
 );
 
 CREATE TABLE reference (
@@ -146,10 +146,13 @@ class _Writer(object):
     '''
     responsible for dumping objects
     '''
+    _TRACKED_TYPES = (types.ModuleType, types.FrameType, types.FunctionType, types.CodeType)
+
     def __init__(self, conn):
         self.conn = conn
         self.type_id_map = {}  # map of type ids to pytype rowids
         self.object_id_map = {}  # map of object ids to object rowids
+        self.tracked_t_id_map = {t: {} for t in self._TRACKED_TYPES}
         self.type_slots_map = {}  # map of type ids to __slots__
         self.modules_map = dict(sys.modules)  # map of __module__ to fake modules when no entry in sys.modules
         self.started = time.time()
@@ -195,6 +198,8 @@ class _Writer(object):
         '''
         if id(obj) in self.object_id_map:
             return self.object_id_map[id(obj)]
+        # this is a quick idiom for assigning integers to objects
+        # e.g. first thing in object_id_map gets assigned 0, second -> 1, etc...
         obj_id = self.object_id_map[id(obj)] = len(self.object_id_map)
         if hasattr(obj, '__class__'):
             type_type_id = self._ensure_db_id(obj.__class__, is_type=True)
@@ -207,6 +212,7 @@ class _Writer(object):
         self.execute(
             "INSERT INTO object (id, pytype, size, len) VALUES (?, ?, ?, ?)",
             (obj_id, type_type_id, sys.getsizeof(obj), length))
+        # all of these are pretty rare (maybe optimize?)
         if id(obj) not in self.type_id_map and (is_type or isinstance(obj, type)):
             obj_type_id = self.type_id_map[id(obj)] = len(self.type_id_map)
             if obj.__module__ not in self.modules_map:
@@ -215,6 +221,49 @@ class _Writer(object):
             self.execute(
                 "INSERT INTO pytype (id, object, module, name) VALUES (?, ?, ?, ?)",
                 (obj_type_id, obj_id, module_obj_id, obj.__name__))
+        elif type(obj) in self.tracked_t_id_map:
+            # ^ expected to be False > 99% of time
+            t_id_map = self.tracked_t_id_map[type(obj)]
+            if id(obj) not in t_id_map:
+                obj_t_id = t_id_map[id(obj)] = len(t_id_map)
+                if type(obj) is types.ModuleType:
+                    self.execute(
+                        "INSERT INTO module (id, object, file, name) VALUES (?, ?, ?, ?)",
+                        (obj_t_id, obj_id, getattr(obj, "__file__", "(none)"), obj.__name__))
+                elif type(obj) is types.FrameType:
+                    if obj.f_back:
+                        f_back_obj_id = self._ensure_db_id(obj.f_back)
+                    else:
+                        f_back_obj_id = None
+                    self.conn.execute(
+                        "INSERT INTO pyframe (id, object, f_back_obj_id, f_code_obj_id, f_lasti, f_lineno, trace)"
+                            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            obj_t_id,
+                            obj_id,
+                            f_back_obj_id,
+                            self._ensure_db_id(obj.f_code),
+                            obj.f_lasti,
+                            obj.f_lineno,
+                            Callpoint.from_frame(obj).tb_frame_str(),
+                        )
+                    )
+                elif type(obj) is types.CodeType:
+                    self.conn.execute(
+                        "INSERT INTO pycode (id, object, co_name) VALUES (?, ?, ?)",
+                        (obj_t_id, obj_id, obj.co_name))
+                elif type(obj) is types.FunctionType:
+                    self.conn.execute(
+                        "INSERT INTO function (id, object, func_name, func_code_obj_id, module_obj_id)"
+                        " VALUES (?, ?, ?, ?, ?)",
+                        (
+                            obj_t_id,
+                            obj_id,
+                            obj.func_name,
+                            self._ensure_db_id(obj.func_code),
+                            self._ensure_db_id(obj.__module__)
+                        )
+                    )
         return obj_id
 
     def add_obj(self, obj):
@@ -244,9 +293,7 @@ class _Writer(object):
         # STEP 2 - GET KEYS
         if mode == "dict":
             keys = obj.keys()
-            key_dst += [('<key>', key) for key in keys] + [
-                ('@{}'.format(self._ensure_db_id(key)), obj[key])
-                for key in keys]
+            key_dst += [('@{}'.format(self._ensure_db_id(key)), obj[key]) for key in keys]
         if mode == "list":
             key_dst += enumerate(obj)
         if mode == "object":
@@ -271,9 +318,20 @@ class _Writer(object):
             [(db_id, self._ensure_db_id(dst), key) for key, dst in key_dst])
         return db_id
 
+    def add_frames(self):
+        '''
+        add all of the current frames
+        '''
+        cur_frames = sys._current_frames()
+        for thread_id, frame in cur_frames.items():
+            self.conn.execute(
+                "INSERT INTO thread (stack_obj_id, thread_id) VALUES (?, ?)",
+                (self._ensure_db_id(frame), thread_id))
+
     def add_all(self):
         gc.collect()  # try to minimize garbage
         self.add_obj(type)
+        self.add_frames()
         for obj in gc.get_objects():
             self.add_obj(obj)
 
@@ -349,6 +407,10 @@ class Reader(object):
         '''run SELECT sql that returns single value'''
         return self.sql(sql, args)[0][0]
 
+    def sql_list(self, sql, args=None):
+        '''run SELECT and return [a, b, c] instead of [(a,), (b,), (c,)]'''
+        return list(sum(self.sql(sql, args), ()))
+
     def object_count(self):
         return self.sql_val('SELECT count(*) FROM object')
 
@@ -405,12 +467,10 @@ class Reader(object):
         return self.sql_val('SELECT name FROM pytype WHERE object = ?', (obj_id,))
 
     def obj_instances(self, obj_id, limit=20):
-        return sum(
-            self.sql(
-                'SELECT id FROM object WHERE object.pytype = ('
+        return self.sql_list(
+            'SELECT id FROM object WHERE object.pytype = ('
                 'SELECT id FROM pytype WHERE pytype.object = ?) LIMIT ?',
-                (obj_id, limit)),
-            ())
+            (obj_id, limit))
 
     def obj_instance_count(self, obj_id):
         return self.sql_val(
@@ -422,6 +482,27 @@ class Reader(object):
         return self.sql(
             'SELECT id FROM object WHERE pytype = (SELECT id FROM pytype WHERE name = ?)',
             (typename,))
+
+    def get_threads(self):
+        '''
+        reconstructs the active threads, returns {thread_id: [trace]}
+        '''
+        thread_frames = {}
+        thread_frames = self.sql(
+            'SELECT thread_id, (SELECT id FROM pyframe WHERE object = stack_obj_id) FROM thread')
+        for thread_id, frame_id in thread_frames:
+            frames_ids = []
+            while frame_id:
+                frame_ids.append(frame_id)
+                frame_id = self.sql_val(
+                    'SELECT id FROM pyframe WHERE object = ('
+                        'SELECT f_back_obj_id FROM pyframe WHERE id = ?)',
+                    (frame_id,))
+            frame_ids.reverse()
+            thread_frames[thread_id] = [
+                self.sql_val('SELECT trace FROM pyframe WHERE id = ?', (frame_id,))
+                for frame_id in frame_ids]
+        return thread_frames
 
 
 def _info_str(reader, obj_id):
@@ -537,37 +618,8 @@ class CLI(object):
 
         return
 
-# TODO: integrate the following
-
-import sys
-from boltons.tbutils import Callpoint
 
 
-def traverse_frames():
-    cur_frames = sys._current_frames()
-    for thread_id, head_frame in cur_frames.items():
-        cur_thread_frames = []
-        limit = getattr(sys, 'tracebacklimit', 1000)
-        frame = head_frame
-        n = 0
-        # walk the linked list
-        while frame is not None and n < limit:
-            cur_thread_frames.append(frame)
-            frame = frame.f_back
-            n += 1
+#f_globals INTEGER, -- object (a dict instance)  OR should this be a ref type e.g. locals["foo"], globals["bar"]
+#f_locals INTEGER, -- object (a dict instance)
 
-        # TODO: create thread record
-
-        cur_thread_frames.reverse()
-
-        # process the frames from oldest to newest
-        for frame in cur_thread_frames:
-            callpoint = Callpoint.from_frame(frame)
-            # TODO: create objects for f_back, f_code, f_globals, f_locals
-            # f_lasti, f_lineno don't need object entries
-            tb_text = callpoint.tb_frame_str()
-            # Callpoint also provides .module_name and .module_path and .func_name
-            # TODO: frame should also point to thread record
-            # TODO: create and save frame record
-
-    return
