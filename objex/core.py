@@ -216,9 +216,7 @@ class _Writer(object):
         # all of these are pretty rare (maybe optimize?)
         if id(obj) not in self.type_id_map and (is_type or isinstance(obj, type)):
             obj_type_id = self.type_id_map[id(obj)] = len(self.type_id_map)
-            if obj.__module__ not in self.modules_map:
-                self.modules_map[obj.__module__] = types.ModuleType(obj.__module__)
-            module_obj_id = self._ensure_db_id(self.modules_map[obj.__module__])
+            module_obj_id = self._module_name2obj_id(obj.__module__)
             self.execute(
                 "INSERT INTO pytype (id, object, module, name) VALUES (?, ?, ?, ?)",
                 (obj_type_id, obj_id, module_obj_id, obj.__name__))
@@ -262,10 +260,15 @@ class _Writer(object):
                             obj_id,
                             obj.func_name,
                             self._ensure_db_id(obj.func_code),
-                            self._ensure_db_id(obj.__module__)
+                            self._module_name2obj_id(obj.__module__)
                         )
                     )
         return obj_id
+
+    def _module_name2obj_id(self, name):
+        if name not in self.modules_map:
+            self.modules_map[name] = types.ModuleType(name)
+        return self._ensure_db_id(self.modules_map[name])
 
     def add_obj(self, obj):
         '''
@@ -320,7 +323,7 @@ class _Writer(object):
                     pass  # just because a slot exists doesn't mean it has a value
         if mode == 'frame':  # expensive to handle, but pretty rare
             key_dst += [("locals[{!r}]".format(key), val) for key, val in obj.f_locals.items()]
-            key_dst.append(("f_globals", self._ensure_db_id(obj.f_globals)))
+            key_dst.append(("f_globals", obj.f_globals))
         if mode == 'func':
             '''
             >>> a = 1
@@ -338,11 +341,11 @@ class _Writer(object):
             '''
             if obj.func_closure:  # (maybe) grab function closure
                 for varname, cell in zip(obj.func_code.co_freevars, obj.func_closure):
-                    key_dst.append((varname, self._ensure_db_id(cell.cell_contents)))
+                    key_dst.append((varname, cell.cell_contents))
             args, varargs, keywords, defaults = inspect.getargspec(obj)
             if defaults:  # (maybe) grab function defaults
                 for name, default in zip(reversed(args), reversed(defaults)):
-                    key_dst.append(("defaults[{!r}]".format(name), self._ensure_db_id(default)))
+                    key_dst.append(("defaults[{!r}]".format(name), default))
         self.conn.executemany(
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
             [(db_id, self._ensure_db_id(dst), key) for key, dst in key_dst])
