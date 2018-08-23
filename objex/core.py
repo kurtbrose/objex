@@ -295,7 +295,7 @@ def dump_graph(path, print_info=False):
     grapher.finish()
     if print_info:
         duration = time.time() - start
-        memory = _get_memory_mb() 
+        memory = _get_memory_mb()
         dumpsize = os.stat(path).st_size / 1024.0 / 1024  # MiB
         objects = len(gc.get_objects())
         print "process memory usage: {:0.3f}MiB".format(memory)
@@ -515,7 +515,7 @@ class CLI(object):
         return choices
 
     def run(self):
-        print("WELCOME TO OBJECT BROWSER")
+        print("WELCOME TO OBJEX EXPLORER")
         print("you are browsing {} collected from {} at {}".format(
             self.reader.path,
             self.reader.sql_val('SELECT hostname FROM meta'),
@@ -530,3 +530,40 @@ class CLI(object):
         while 1:
             print(self._menu())
             self.obj_id = self._choices()[raw_input("GO TO:")]
+
+        return
+
+# TODO: integrate the following
+
+import sys
+from boltons.tbutils import Callpoint
+
+
+def traverse_frames():
+    cur_frames = sys._current_frames()
+    for thread_id, head_frame in cur_frames.items():
+        cur_thread_frames = []
+        limit = getattr(sys, 'tracebacklimit', 1000)
+        frame = head_frame
+        n = 0
+        # walk the linked list
+        while frame is not None and n < limit:
+            cur_thread_frames.append(frame)
+            frame = frame.f_back
+            n += 1
+
+        # TODO: create thread record
+
+        cur_thread_frames.reverse()
+
+        # process the frames from oldest to newest
+        for frame in cur_thread_frames:
+            callpoint = Callpoint.from_frame(frame)
+            # TODO: create objects for f_back, f_code, f_globals, f_locals
+            # f_lasti, f_lineno don't need object entries
+            tb_text = callpoint.tb_frame_str()
+            # Callpoint also provides .module_name and .module_path and .func_name
+            # TODO: frame should also point to thread record
+            # TODO: create and save frame record
+
+    return

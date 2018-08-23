@@ -27,7 +27,7 @@ setup(
     author_email=__contact__,
     url=__url__,
     packages=['objex'],
-    install_requires=[],
+    install_requires=['boltons'],
     extras_require={},
     license=__license__,
     platforms='any',
