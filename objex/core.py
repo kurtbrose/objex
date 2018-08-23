@@ -12,6 +12,11 @@ import time
 import types
 
 
+# MAINTENANCE NOTE: why are some python types "special" and get broken out as
+# their own table type whereas others are not?
+# the guiding principle is that objects which tend to need special display
+# and/or collection logic get separate tables
+
 _SCHEMA = '''
 CREATE TABLE meta (
     id INTEGER PRIMARY KEY,
@@ -19,13 +24,8 @@ CREATE TABLE meta (
     pid INTEGER NOT NULL,
     hostname TEXT NOT NULL,
     memory_mb INTEGER NOT NULL,
+    gc_info TEXT NOT NULL,
     duration_s REAL
-);
-
-CREATE TABLE pytype (
-    id INTEGER PRIMARY KEY,
-    object INTEGER NOT NULL,
-    name TEXT NOT NULL -- typenames are okay
 );
 
 CREATE TABLE object (
@@ -33,6 +33,58 @@ CREATE TABLE object (
     pytype INTEGER NOT NULL,
     size INTEGER NOT NULL,
     len INTEGER
+);
+
+CREATE TABLE pytype (
+    id INTEGER PRIMARY KEY,
+    object INTEGER NOT NULL,
+    module INTEGER NOT NULL, -- object-id of module
+    name TEXT NOT NULL -- typenames are okay
+);
+
+CREATE TABLE pytype_inherits (
+    id INTEGER PRIMARY KEY,
+    parent INTEGER NOT NULL, -- pytype
+    child INTEGER NOT NULL -- pytype
+);
+
+CREATE TABLE module (
+    id INTEGER PRIMARY KEY,
+    object INTEGER NOT NULL,
+    file TEXT NOT NULL,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE pyframe (
+    id INTEGER PRIMARY KEY,
+    object INTEGER NOT NULL,
+    f_back INTEGER, -- object (pyframe or None)
+    f_code INTEGER NOT NULL, -- object (code)
+    f_globals INTEGER, -- object (a dict instance)  OR should this be a ref type e.g. locals["foo"], globals["bar"]
+    f_locals INTEGER, -- object (a dict instance)
+    f_lasti INTEGER NOT NULL, -- last instruction executed in code
+    f_lineno INTEGER NOT NULL, -- line number in code
+    trace TEXT NOT NULL  -- segment of a traceback kind of format (used for display to user)
+);
+
+CREATE TABLE pycode (  -- needed to assocaite pyframes back to function objects
+    id INTEGER PRIMARY KEY,
+    object INTEGER NOT NULL,
+    co_name TEXT NOT NULL
+);
+
+CREATE TABLE function (
+    id INTEGER PRIMARY KEY,
+    object INTEGER NOT NULL,
+    func_name TEXT NOT NULL,
+    func_code INTEGER NOT NULL, -- object-id of pycode
+    module INTEGER NOT NULL -- object-id of module
+);
+
+CREATE TABLE thread (
+    id INTEGER PRIMARY KEY,
+    stack INTEGER NOT NULL, -- object-id of pyframe
+    thread_id INTEGER NOT NULL -- os-layer thread-id (key of sys._current_frames)
 );
 
 CREATE TABLE reference (
@@ -98,7 +150,13 @@ class _Writer(object):
         self.conn = conn
         self.type_id_map = type_id_map
         self.object_id_map = object_id_map
+        self.type_slots_map = {}
         self.started = time.time()
+        # ignore ids not just to avoid analysis noise, but because these can
+        # get pretty big over time, don't want to waste DB space
+        self.ignore_ids = {id(e) for e in self.__dict__.values()}
+        self.ignore_ids.add(id(self.ignore_ids))
+        self.ignore_ids.add(self.__dict__)
         # commented out tracing code
         # TODO how to put it in w/out hurting perf if off?
         # (maybe optional decorators?)
@@ -120,8 +178,8 @@ class _Writer(object):
             "INSERT INTO pytype (id, object, name) VALUES (0, 0, 'type')")
         memory = _get_memory_mb()
         conn.execute(
-            "INSERT INTO meta (id, pid, hostname, memory_mb) VALUES (0, ?, ?, ?)",
-            (os.getpid(), getfqdn(), memory))
+            "INSERT INTO meta (id, pid, hostname, memory_mb, gc_info) VALUES (0, ?, ?, ?, ?)",
+            (os.getpid(), getfqdn(), memory, ';'.join(gc.get_count())))
         return cls(conn, type_id_map, object_id_map)
 
     def execute(self, sql, params):
@@ -158,10 +216,14 @@ class _Writer(object):
                 (obj_type_id, obj_id, obj.__name__))
         return obj_id
 
-    def _add_referents(self, obj):
+    def add_obj(self, obj):
         '''
-        obj is something that is tracked by gc
+        add an object and references to this graph
         '''
+        if id(obj) in self.ignore_ids:
+            return None
+        if id(obj) in self.object_id_map:
+            return self.object_id_map[id(obj)]
         db_id = self._ensure_db_id(obj)
         key_dst = []
         mode = "object"
@@ -179,8 +241,8 @@ class _Writer(object):
         if mode == "dict":
             keys = obj.keys()
             key_dst += [('<key>', key) for key in keys] + [
-                ('<object@' + str(self._ensure_db_id(key)) + '>', 
-                 obj[key]) for key in keys]
+                ('@{}'.format(self._ensure_db_id(key)), obj[key])
+                for key in keys]
         if mode == "list":
             key_dst += enumerate(obj)
         if mode == "object":
@@ -203,13 +265,11 @@ class _Writer(object):
         self.conn.executemany(
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
             [(db_id, self._ensure_db_id(dst), key) for key, dst in key_dst])
-
-    def add_obj(self, obj):
-        '''add an object and references to this graph'''
-        #self._add_referrers(obj)  # things that point at obj
-        self._add_referents(obj)  # things that obj points at
+        return db_id
 
     def add_all(self):
+        gc.collect()  # try to minimize garbage
+        self.add_frames()
         for obj in gc.get_objects():
             self.add_obj(obj)
 
@@ -222,6 +282,13 @@ class _Writer(object):
 
 
 def dump_graph(path, print_info=False):
+    '''
+    dump a collection db to path;
+    the collection db is designed to be small
+    and write fast, so it needs post-processing
+    to e.g. add indices and compute values
+    before analysis
+    '''
     start = time.time()
     grapher = _Writer.from_path(path)
     grapher.add_all()
@@ -346,6 +413,11 @@ class Reader(object):
             'SELECT count(*) FROM object WHERE object.pytype = ('
             'SELECT id FROM pytype WHERE pytype.object= ?)',
             (obj_id,))
+
+    def instances_by_typename(self, typename):
+        return self.sql(
+            'SELECT id FROM object WHERE pytype = (SELECT id FROM pytype WHERE name = ?)',
+            (typename,))
 
 
 def _info_str(reader, obj_id):
