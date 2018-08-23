@@ -194,6 +194,11 @@ class _Writer(object):
         # self.times.extend([total / len(params)] * len(params))
 
     def _ensure_db_id(self, obj, is_type=False):
+        '''
+        DB id creation is separate from full object creation
+        as a kind of "forward declaration" step to avoid loops
+        (e.g. an object that refers to itself)
+        '''
         if id(obj) in self.object_id_map:
             return self.object_id_map[id(obj)]
         obj_id = self.object_id_map[id(obj)] = len(self.object_id_map)
@@ -208,22 +213,25 @@ class _Writer(object):
         self.execute(
             "INSERT INTO object (id, pytype, size, len) VALUES (?, ?, ?, ?)",
             (obj_id, type_type_id, sys.getsizeof(obj), length))
-        # just in case a class doesn't have any instances it will still be populated
         if id(obj) not in self.type_id_map and (is_type or isinstance(obj, type)):
             obj_type_id = self.type_id_map[id(obj)] = len(self.type_id_map)
+            self._ensure_db_id()
             self.execute(
-                "INSERT INTO pytype (id, object, name) VALUES (?, ?, ?)",
+                "INSERT INTO pytype (id, object, module, name) VALUES (?, ?, ?, ?)",
                 (obj_type_id, obj_id, obj.__name__))
         return obj_id
 
     def add_obj(self, obj):
         '''
         add an object and references to this graph
+
+        this funcion is idempotent; i.e. calling it 100x
+        on the same object is the same as calling it once
         '''
-        if id(obj) in self.ignore_ids:
-            return None
-        if id(obj) in self.object_id_map:
-            return self.object_id_map[id(obj)]
+        obj_id = id(obj)
+        if obj_id in self.ignore_ids:
+            return self.object_id_map.get(obj_id)
+        self.ignore_ids.add(obj_id)
         db_id = self._ensure_db_id(obj)
         key_dst = []
         mode = "object"
@@ -241,7 +249,7 @@ class _Writer(object):
         if mode == "dict":
             keys = obj.keys()
             key_dst += [('<key>', key) for key in keys] + [
-                ('@{}'.format(self._ensure_db_id(key)), obj[key])
+                ('@{}'.format(self.add_obj(key)), obj[key])
                 for key in keys]
         if mode == "list":
             key_dst += enumerate(obj)
@@ -264,7 +272,7 @@ class _Writer(object):
                     pass  # just because a slot exists doesn't mean it has a value
         self.conn.executemany(
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
-            [(db_id, self._ensure_db_id(dst), key) for key, dst in key_dst])
+            [(db_id, self.add_obj(dst), key) for key, dst in key_dst])
         return db_id
 
     def add_all(self):
