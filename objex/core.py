@@ -202,14 +202,14 @@ class _Writer(object):
         # this is a quick idiom for assigning integers to objects
         # e.g. first thing in object_id_map gets assigned 0, second -> 1, etc...
         obj_id = self.object_id_map[id(obj)] = len(self.object_id_map)
-        type_type_id = self._ensure_db_id(type(obj), is_type=True)
+        type_obj_id = self._ensure_db_id(type(obj), is_type=True)
         try:  # very hard to forward detect if this will works
             length = len(obj)
         except Exception:
             length = None
         self.execute(
             "INSERT INTO object (id, pytype, size, len) VALUES (?, ?, ?, ?)",
-            (obj_id, type_type_id, sys.getsizeof(obj), length))
+            (obj_id, type_obj_id, sys.getsizeof(obj), length))
         # all of these are pretty rare (maybe optimize?)
         if id(obj) not in self.type_id_map and (is_type or isinstance(obj, type)):
             obj_type_id = self.type_id_map[id(obj)] = len(self.type_id_map)
@@ -228,46 +228,47 @@ class _Writer(object):
         row in the corresponding special talbe (module, pyframe, pycode, function)
         '''
         t_id_map = self.tracked_t_id_map[type(obj)]
-        if id(obj) not in t_id_map:
-            obj_t_id = t_id_map[id(obj)] = len(t_id_map)
-            if type(obj) is types.ModuleType:
-                self.execute(
-                    "INSERT INTO module (id, object, file, name) VALUES (?, ?, ?, ?)",
-                    (obj_t_id, obj_id, getattr(obj, "__file__", "(none)"), obj.__name__))
-            elif type(obj) is types.FrameType:
-                if obj.f_back:
-                    f_back_obj_id = self._ensure_db_id(obj.f_back)
-                else:
-                    f_back_obj_id = None
-                self.conn.execute(
-                    "INSERT INTO pyframe (id, object, f_back_obj_id, f_code_obj_id, f_lasti, f_lineno, trace)"
-                        " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        obj_t_id,
-                        obj_id,
-                        f_back_obj_id,
-                        self._ensure_db_id(obj.f_code),
-                        obj.f_lasti,
-                        obj.f_lineno,
-                        Callpoint.from_frame(obj).tb_frame_str(),
-                    )
+        if id(obj) in t_id_map:
+            return
+        obj_t_id = t_id_map[id(obj)] = len(t_id_map)
+        if type(obj) is types.ModuleType:
+            self.execute(
+                "INSERT INTO module (id, object, file, name) VALUES (?, ?, ?, ?)",
+                (obj_t_id, obj_id, getattr(obj, "__file__", "(none)"), obj.__name__))
+        elif type(obj) is types.FrameType:
+            if obj.f_back:
+                f_back_obj_id = self._ensure_db_id(obj.f_back)
+            else:
+                f_back_obj_id = None
+            self.conn.execute(
+                "INSERT INTO pyframe (id, object, f_back_obj_id, f_code_obj_id, f_lasti, f_lineno, trace)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    obj_t_id,
+                    obj_id,
+                    f_back_obj_id,
+                    self._ensure_db_id(obj.f_code),
+                    obj.f_lasti,
+                    obj.f_lineno,
+                    Callpoint.from_frame(obj).tb_frame_str(),
                 )
-            elif type(obj) is types.CodeType:
-                self.conn.execute(
-                    "INSERT INTO pycode (id, object, co_name) VALUES (?, ?, ?)",
-                    (obj_t_id, obj_id, obj.co_name))
-            elif type(obj) is types.FunctionType:
-                self.conn.execute(
-                    "INSERT INTO function (id, object, func_name, func_code_obj_id, module_obj_id)"
-                    " VALUES (?, ?, ?, ?, ?)",
-                    (
-                        obj_t_id,
-                        obj_id,
-                        obj.func_name,
-                        self._ensure_db_id(obj.func_code),
-                        self._module_name2obj_id(obj.__module__)
-                    )
+            )
+        elif type(obj) is types.CodeType:
+            self.conn.execute(
+                "INSERT INTO pycode (id, object, co_name) VALUES (?, ?, ?)",
+                (obj_t_id, obj_id, obj.co_name))
+        elif type(obj) is types.FunctionType:
+            self.conn.execute(
+                "INSERT INTO function (id, object, func_name, func_code_obj_id, module_obj_id)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (
+                    obj_t_id,
+                    obj_id,
+                    obj.func_name,
+                    self._ensure_db_id(obj.func_code),
+                    self._module_name2obj_id(obj.__module__)
                 )
+            )
 
     def _module_name2obj_id(self, name):
         if name not in self.modules_map:

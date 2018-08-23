@@ -2,5 +2,8 @@ import sys
 
 from . import core
 
-
-core.CLI(core.Reader(sys.argv[-1])).run()
+try:
+    core.CLI(core.Reader(sys.argv[-1])).run()
+except:
+    import traceback; traceback.print_exc()
+    import pdb; pdb.post_mortem()
