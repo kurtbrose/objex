@@ -12,7 +12,7 @@ from setuptools import setup
 
 
 __author__ = 'Kurt Rose'
-__version__ = '0.6dev'
+__version__ = '0.7dev'
 __contact__ = 'kurt@kurtrose.com'
 __url__ = 'https://github.com/kurtbrose/objex'
 __license__ = 'BSD'
