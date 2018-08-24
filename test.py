@@ -42,6 +42,10 @@ class NoneModule(object): pass  # sometimes __module__ = None
 
 NoneModule.__module__ = None
 
+def none_module(): pass
+
+none_module.__module__ = None
+
 # now that a bunch of balls are in the air, dump them to disk
 if os.path.exists('objex-test.db'):
     os.remove('objex-test.db')
