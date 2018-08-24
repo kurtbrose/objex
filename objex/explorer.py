@@ -1,16 +1,15 @@
-import gc
-import inspect
+
+from __future__ import print_function
+
 import os
+import cmd
 try:
     import resource
 except ImportError:  # windows
     resource = None
 import shutil
-import sys
-from socket import getfqdn
 import sqlite3
-import time
-import types
+
 
 try:
     import colorama
@@ -140,7 +139,7 @@ class Reader(object):
         thread_frames = self.sql(
             'SELECT thread_id, (SELECT id FROM pyframe WHERE object = stack_obj_id) FROM thread')
         for thread_id, frame_id in thread_frames:
-            frames_ids = []
+            frame_ids = []
             while frame_id:
                 frame_ids.append(frame_id)
                 frame_id = self.sql_val(
@@ -153,6 +152,123 @@ class Reader(object):
                 for frame_id in frame_ids]
         return thread_frames
 
+
+class ConsoleV2(cmd.Cmd):
+    prompt = 'objex> '
+
+    def __init__(self, reader, start=None):
+        self.reader = reader
+        self.history = [start or 0]  # TODO: lookup
+        self.history_idx = 0
+
+        cmd.Cmd.__init__(self)  # old style class :'(
+
+    @property
+    def cur(self):
+        return self.history[self.history_idx]
+
+    def _obj_label(self, obj_id):
+        try:
+            from termcolor import colored
+        except ImportError:
+            colored = lambda s, color: s
+
+        if self.reader.obj_is_type(obj_id):
+            return colored("<type {}@{}>".format(
+                self.reader.typename(obj_id), obj_id), 'green')
+        if self.reader.obj_is_module(obj_id):
+            return "<module {}@{}>".format(
+                self.reader.modulename(obj_id), obj_id)
+        if self.reader.obj_is_func(obj_id):
+            return "<function {}@{}>".format(
+                self.reader.funcname(obj_id), obj_id)
+        return colored("<{}@{}>".format(
+            self.reader.obj_typename(obj_id), obj_id), 'red')
+
+    def _ref(self, ref):
+        '''translate ref for display'''
+        if ref[0].isdigit():
+            return "[{}]".format(ref)
+        if ref[0] == '@':
+            return "[" + self._obj_label(int(ref[1:])) + "]"
+        return ref
+
+    def _info_str(self, obj_id):
+        if self.reader.obj_is_type(obj_id):
+            return "{label} (instances={num_instances:,})".format(
+                label=self._obj_label(obj_id),
+                obj_id=obj_id,
+                num_instances=self.reader.obj_instance_count(obj_id),
+            )
+        obj_len = self.reader.obj_len(obj_id)
+        if obj_len is None:
+            return '{label} (size={size})'.format(
+                label=self._obj_label(obj_id),
+                size=self.reader.obj_size(obj_id))
+
+        return '{label} (size={size}, len={len})'.format(
+            label=self._obj_label(obj_id),
+            size=self.reader.obj_size(obj_id),
+            len=obj_len)
+
+    def do_in(self, line):
+        res = []
+        in_ref = self.reader.refers_to_obj(self.cur)
+        if line:
+            return res  # TODO (go to a specific one)
+
+        label = self._obj_label(self.cur)
+        res.append("{:,} objects refer to {}:".format(
+            self.reader.refers_to_obj_count(self.cur), label))
+
+        for ref, src in in_ref:
+            res.append(' {}{}'.format(self._obj_label(src), self._ref(ref)))
+
+        res.append('')
+        if self.reader.obj_is_type(self.cur):
+            res.append('{:,} instances of {}:'.format(self.reader.obj_instance_count(self.cur),
+                                                      label))
+
+            for inst in self.reader.obj_instances(self.cur):
+                res.append(' {}'.format(self._info_str(inst)))
+
+        print('\n'.join(res))
+        return
+
+    def do_out(self, line):
+        res = []
+        out_ref = self.reader.obj_refers_to(self.cur)
+        if line:
+            return res  # TODO (go to a specific one)
+
+        for ref, dst in out_ref:
+            res.append(' {}: {}'.format(ref, self._info_str(dst)))
+        print('\n'.join(res))
+        return
+
+    def postcmd(self, stop, line):
+        print()  # TODO: better place to put this?
+        return stop
+
+    def do_EOF(self, line):
+        print()
+        return True
+
+    def run(self):
+        print("WELCOME TO OBJEX EXPLORER")
+        print("you are browsing {} collected from {} at {}".format(
+            self.reader.path,
+            self.reader.sql_val('SELECT hostname FROM meta'),
+            self.reader.sql_val('SELECT ts FROM meta'),
+        ))
+        print("peak RSS memory was {:.2f}MiB; {:0.01f}MiB ({:0.01f}%) found in {:,} python objects".format(
+            self.reader.sql_val('SELECT memory_mb FROM meta'),
+            self.reader.sql_val('SELECT SUM(size) FROM object') / 1024 / 1024,
+            self.reader.visible_memory_fraction() * 100,
+            self.reader.object_count(),
+        ))
+
+        return self.cmdloop()
 
 
 class Console(object):
