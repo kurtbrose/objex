@@ -108,12 +108,24 @@ class Reader(object):
     def refers_to_obj_count(self, obj_id):
         return self.sql_val('SELECT count(*) FROM reference WHERE dst = ?', (obj_id,))
 
+    def obj_is_func(self, obj_id):
+        return self.sql_val('SELECT EXISTS(SELECT 1 FROM function WHERE object = ?)', (obj_id,))
+
+    def obj_is_module(self, obj_id):
+        return self.sql_val('SELECT EXISTS(SELECT 1 FROM module WHERE object = ?)', (obj_id,))
+
     def obj_is_type(self, obj_id):
-        return self.sql_val('SELECT EXISTS(SELECT 1 FROM pytype WHERE pytype.object = ?)', (obj_id,))
+        return self.sql_val('SELECT EXISTS(SELECT 1 FROM pytype WHERE object = ?)', (obj_id,))
 
     def typename(self, obj_id):
         '''name of an object that IS a type'''
         return self.sql_val('SELECT name FROM pytype WHERE object = ?', (obj_id,))
+
+    def modulename(self, obj_id):
+        return self.sql_val('SELECT name FROM module WHERE object = ?', (obj_id,))
+
+    def funcname(self, obj_id):
+        return self.sql_val('SELECT func_name FROM function WHERE object = ?', (obj_id,))
 
     def obj_instances(self, obj_id, limit=20):
         return self.sql_list(
@@ -169,6 +181,12 @@ class Console(object):
         if self.reader.obj_is_type(obj_id):
             return colored("<type {}@{}>".format(
                 self.reader.typename(obj_id), obj_id), 'green')
+        if self.reader.obj_is_module(obj_id):
+            return "<module {}@{}>".format(
+                self.reader.modulename(obj_id), obj_id)
+        if self.reader.obj_is_func(obj_id):
+            return "<function {}@{}>".format(
+                self.reader.funcname(obj_id), obj_id)
         return colored("<{}@{}>".format(
             self.reader.obj_typename(obj_id), obj_id), 'red')
 
