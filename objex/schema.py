@@ -20,7 +20,7 @@ CREATE TABLE object (
 CREATE TABLE pytype (
     id INTEGER PRIMARY KEY,
     object INTEGER NOT NULL,
-    module INTEGER NOT NULL, -- object-id of module
+    module INTEGER, -- object-id of module
     name TEXT NOT NULL -- typenames are okay
 );
 

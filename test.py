@@ -37,6 +37,11 @@ t.start()
 
 thread.start_new_thread(stacker, ())
 
+
+class NoneModule(object): pass  # sometimes __module__ = None
+
+NoneModule.__module__ = None
+
 # now that a bunch of balls are in the air, dump them to disk
 if os.path.exists('objex-test.db'):
     os.remove('objex-test.db')

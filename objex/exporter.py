@@ -172,6 +172,8 @@ class _Writer(object):
             )
 
     def _module_name2obj_id(self, name):
+        if name is None:
+            return None  # sometimes __module__ is None
         if name not in self.modules_map:
             self.modules_map[name] = types.ModuleType(name)
         return self._ensure_db_id(self.modules_map[name])
