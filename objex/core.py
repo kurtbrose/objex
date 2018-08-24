@@ -311,7 +311,7 @@ class _Writer(object):
             key_dst += enumerate(obj)
         if mode == "object":
             if hasattr(obj, "__dict__"):
-                key_dst += obj.__dict__.items()
+                key_dst += [('.' + key, dst) for key, dst in obj.__dict__.items()]
             try:
                 slots = obj.__class__.__slots__
             except AttributeError:
@@ -323,12 +323,12 @@ class _Writer(object):
                 if key.startswith('__'):  # private slots name mangling
                     key = "_" + obj.__class__.__name__ + key
                 try:
-                    key_dst.append((key, getattr(obj, key)))
+                    key_dst.append(('.' + key, getattr(obj, key)))
                 except AttributeError:
                     pass  # just because a slot exists doesn't mean it has a value
         if mode == 'frame':  # expensive to handle, but pretty rare
-            key_dst += [("locals[{!r}]".format(key), val) for key, val in obj.f_locals.items()]
-            key_dst.append(("f_globals", obj.f_globals))
+            key_dst += [(".locals[{!r}]".format(key), val) for key, val in obj.f_locals.items()]
+            key_dst.append((".f_globals", obj.f_globals))
         if mode == 'func':
             '''
             >>> a = 1
@@ -350,7 +350,7 @@ class _Writer(object):
             args, varargs, keywords, defaults = inspect.getargspec(obj)
             if defaults:  # (maybe) grab function defaults
                 for name, default in zip(reversed(args), reversed(defaults)):
-                    key_dst.append(("defaults[{!r}]".format(name), default))
+                    key_dst.append((".defaults[{!r}]".format(name), default))
         self.conn.executemany(
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
             [(db_id, self._ensure_db_id(dst), key) for key, dst in key_dst])
@@ -544,20 +544,6 @@ class Reader(object):
         return thread_frames
 
 
-def _info_str(reader, obj_id):
-    if reader.obj_is_type(obj_id):
-        return "{label} (instances={num_instances:,})".format(
-            label=_obj_label(reader, obj_id),
-            obj_id=obj_id,
-            num_instances=reader.obj_instance_count(obj_id),
-        )
-    return '''{label} (size={size}, len={len})'''.format(
-        label=_obj_label(reader, obj_id),
-        obj_id=obj_id,
-        size=reader.obj_size(obj_id),
-        len=reader.obj_len(obj_id))
-
-
 try:
     import colorama
 except ImportError:
@@ -566,21 +552,43 @@ else:
     colorama.init()
 
 
-def _obj_label(reader, obj_id):
-    try:
-        from termcolor import colored
-    except ImportError:
-        colored = lambda s, color: s
-
-    if reader.obj_is_type(obj_id):
-        return colored("<type {}@{}>".format(reader.typename(obj_id), obj_id), 'green')
-    return colored("<{}@{}>".format(reader.obj_typename(obj_id), obj_id), 'red')
-
-
 class CLI(object):
     def __init__(self, reader, obj_id=0):
         self.reader = reader
         self.obj_id = obj_id
+
+    def _obj_label(self, obj_id):
+        try:
+            from termcolor import colored
+        except ImportError:
+            colored = lambda s, color: s
+
+        if self.reader.obj_is_type(obj_id):
+            return colored("<type {}@{}>".format(
+                self.reader.typename(obj_id), obj_id), 'green')
+        return colored("<{}@{}>".format(
+            self.reader.obj_typename(obj_id), obj_id), 'red')
+
+    def _info_str(self, obj_id):
+        if self.reader.obj_is_type(obj_id):
+            return "{label} (instances={num_instances:,})".format(
+                label=self._obj_label(obj_id),
+                obj_id=obj_id,
+                num_instances=self.reader.obj_instance_count(obj_id),
+            )
+        return '''{label} (size={size}, len={len})'''.format(
+            label=self._obj_label(obj_id),
+            obj_id=obj_id,
+            size=self.reader.obj_size(obj_id),
+            len=self.reader.obj_len(obj_id))
+
+    def _ref(self, ref):
+        '''translate ref for display'''
+        if ref[0].isdigit():
+            return "[{}]".format(ref)
+        if ref[0] == '@':
+            return "[" + self._obj_label(int(ref[1:])) + "]"
+        return ref
 
     def _menu(self):
         try:
@@ -588,20 +596,20 @@ class CLI(object):
         except ImportError:
             colored = lambda s, color: s
 
-        label = _obj_label(self.reader, self.obj_id)
+        label = self._obj_label(self.obj_id)
         refers_to_obj = []
         i = 0
         for ref, src in self.reader.refers_to_obj(self.obj_id):
-            refers_to_obj.append('({}) - {}: {}'.format(
-                i, ref, _info_str(self.reader, src)))
+            refers_to_obj.append('({}) - {}{}'.format(
+                i, self._obj_label(src), self._ref(ref)))
             i += 1
         obj_refers_to = []
         for ref, dst in self.reader.obj_refers_to(self.obj_id):
             obj_refers_to.append('({}) - {}: {}'.format(
-                i, ref, _info_str(self.reader, dst)))
+                i, ref, self._info_str(dst)))
             i += 1
         lines = [
-            "CUR: {}".format(_info_str(self.reader, self.obj_id)),
+            "CUR: {}".format(self._info_str(self.obj_id)),
             "{:,} objects refer to {}...".format(
                 self.reader.refers_to_obj_count(self.obj_id),
                 label)
@@ -613,7 +621,7 @@ class CLI(object):
         if self.reader.obj_is_type(self.obj_id):
             instances = []
             for inst in self.reader.obj_instances(self.obj_id):
-                instances.append('({}) - {}'.format(i, _info_str(self.reader, inst)))
+                instances.append('({}) - {}'.format(i, self._info_str(inst)))
                 i += 1
             lines += [
                 '{} has {:,} instances...'.format(
