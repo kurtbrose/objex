@@ -3,6 +3,7 @@ from __future__ import print_function
 
 import os
 import cmd
+
 try:
     import resource
 except ImportError:  # windows
@@ -110,9 +111,24 @@ class Reader(object):
     def obj_is_type(self, obj_id):
         return self.sql_val('SELECT EXISTS(SELECT 1 FROM pytype WHERE pytype.object = ?)', (obj_id,))
 
+    def obj_is_func(self, obj_id):
+        return self.sql_val('SELECT EXISTS(SELECT 1 FROM function WHERE object = ?)', (obj_id,))
+
+    def obj_is_module(self, obj_id):
+        return self.sql_val('SELECT EXISTS(SELECT 1 FROM module WHERE object = ?)', (obj_id,))
+
+    def obj_is_type(self, obj_id):
+        return self.sql_val('SELECT EXISTS(SELECT 1 FROM pytype WHERE object = ?)', (obj_id,))
+
     def typename(self, obj_id):
         '''name of an object that IS a type'''
         return self.sql_val('SELECT name FROM pytype WHERE object = ?', (obj_id,))
+
+    def modulename(self, obj_id):
+        return self.sql_val('SELECT name FROM module WHERE object = ?', (obj_id,))
+
+    def funcname(self, obj_id):
+        return self.sql_val('SELECT func_name FROM function WHERE object = ?', (obj_id,))
 
     def obj_instances(self, obj_id, limit=20):
         return self.sql_list(
@@ -158,14 +174,23 @@ class ConsoleV2(cmd.Cmd):
 
     def __init__(self, reader, start=None):
         self.reader = reader
-        self.history = [start or 0]  # TODO: lookup
-        self.history_idx = 0
+        self.path = [start or 0]  # TODO: lookup
+        self.path_idx = 0
+
+        self.cmd_history = []
 
         cmd.Cmd.__init__(self)  # old style class :'(
 
+    def onecmd(self, s):
+        try:
+            return cmd.Cmd.onecmd(self, s)
+        except Exception:
+            # TODO: better exception handling can go here, maybe pdb with OBJEX_DEBUG=True
+            raise
+
     @property
     def cur(self):
-        return self.history[self.history_idx]
+        return self.path[self.path_idx]
 
     def _obj_label(self, obj_id):
         try:
@@ -212,6 +237,7 @@ class ConsoleV2(cmd.Cmd):
             len=obj_len)
 
     def do_in(self, line):
+        "View inbound references of the current object"
         res = []
         in_ref = self.reader.refers_to_obj(self.cur)
         if line:
@@ -236,10 +262,15 @@ class ConsoleV2(cmd.Cmd):
         return
 
     def do_out(self, line):
+        "View outbound references of the current object"
         res = []
         out_ref = self.reader.obj_refers_to(self.cur)
         if line:
             return res  # TODO (go to a specific one)
+
+        label = self._obj_label(self.cur)
+        res.append("{:,} references to {}:".format(self.reader.obj_refers_to_count(self.cur),
+                                                   label))
 
         for ref, dst in out_ref:
             res.append(' {}: {}'.format(ref, self._info_str(dst)))
@@ -251,22 +282,24 @@ class ConsoleV2(cmd.Cmd):
         return stop
 
     def do_EOF(self, line):
+        "type Ctrl-D to exit"
         print()
         return True
 
     def run(self):
         print("WELCOME TO OBJEX EXPLORER")
-        print("you are browsing {} collected from {} at {}".format(
+        print('now exploring "{}" collected from {} at {}'.format(
             self.reader.path,
             self.reader.sql_val('SELECT hostname FROM meta'),
             self.reader.sql_val('SELECT ts FROM meta'),
         ))
-        print("peak RSS memory was {:.2f}MiB; {:0.01f}MiB ({:0.01f}%) found in {:,} python objects".format(
+        print("RSS memory was {:.2f}MiB; {:0.01f}MiB ({:0.01f}%) found in {:,} python objects".format(
             self.reader.sql_val('SELECT memory_mb FROM meta'),
             self.reader.sql_val('SELECT SUM(size) FROM object') / 1024 / 1024,
             self.reader.visible_memory_fraction() * 100,
             self.reader.object_count(),
         ))
+        print()
 
         return self.cmdloop()
 
