@@ -20,7 +20,7 @@
 * down - counterpart to up
 * go
 * list
-* where - if a frame, includes stack, if a type, includes mro
+* where - if a frame, includes stack, if a type, includes mro, always gives some idea of orientation (traversal path history)
 
 Other:
 
@@ -32,7 +32,8 @@ Other:
 
 ## Metrics
 
-* steps to nearest module, or if not accessible via module, frames
+* flood fill paths to give steps to nearest module, or if not accessible via module, frames
+  * common prefix of paths interesting?
 * centrality, weighted by sizeof
 * pagerank of the reverse directed graph (suspected)
 * some way of quantifying loosely connected components (hanging threads) (community stuff too slow)
