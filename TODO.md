@@ -21,6 +21,8 @@
 * go
 * list
 * where - if a frame, includes stack, if a type, includes mro, always gives some idea of orientation (traversal path history)
+* history
+* path
 
 Other:
 

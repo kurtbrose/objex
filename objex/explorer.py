@@ -18,6 +18,11 @@ except ImportError:
     pass
 else:
     colorama.init()
+try:
+    from termcolor import colored
+except ImportError:
+    colored = lambda s, color: s
+
 
 from .schema import _INDICES
 from .dbutils import _run_ddl
@@ -174,30 +179,41 @@ class ConsoleV2(cmd.Cmd):
 
     def __init__(self, reader, start=None):
         self.reader = reader
-        self.path = [start or 0]  # TODO: lookup
-        self.path_idx = 0
+        self.history = [start or 0]  # TODO: lookup
+        self.history_idx = 0
 
         self.cmd_history = []
 
         cmd.Cmd.__init__(self)  # old style class :'(
 
-    def onecmd(self, s):
+    @property
+    def cur(self):
+        return self.history[self.history_idx]
+
+    # cmd.Cmd customizations/overrides
+    def onecmd(self, line):
         try:
-            return cmd.Cmd.onecmd(self, s)
+            return cmd.Cmd.onecmd(self, line)
         except Exception:
             # TODO: better exception handling can go here, maybe pdb with OBJEX_DEBUG=True
             raise
 
-    @property
-    def cur(self):
-        return self.path[self.path_idx]
+    def parseline(self, line):
+        command, arg, line = cmd.Cmd.parseline(self, line)
+        if arg is None:
+            return command, arg, line
+        return command, arg.split(), line
+
+    def postcmd(self, stop, line):
+        print()  # TODO: better place to put this?
+        return stop
+
+    def do_EOF(self, line):
+        "type Ctrl-D to exit"
+        print()
+        return True
 
     def _obj_label(self, obj_id):
-        try:
-            from termcolor import colored
-        except ImportError:
-            colored = lambda s, color: s
-
         if self.reader.obj_is_type(obj_id):
             return colored("<type {}@{}>".format(
                 self.reader.typename(obj_id), obj_id), 'green')
@@ -236,11 +252,11 @@ class ConsoleV2(cmd.Cmd):
             size=self.reader.obj_size(obj_id),
             len=obj_len)
 
-    def do_in(self, line):
+    def do_in(self, args):
         "View inbound references of the current object"
         res = []
         in_ref = self.reader.refers_to_obj(self.cur)
-        if line:
+        if args:
             return res  # TODO (go to a specific one)
 
         label = self._obj_label(self.cur)
@@ -261,11 +277,11 @@ class ConsoleV2(cmd.Cmd):
         print('\n'.join(res))
         return
 
-    def do_out(self, line):
+    def do_out(self, args):
         "View outbound references of the current object"
         res = []
         out_ref = self.reader.obj_refers_to(self.cur)
-        if line:
+        if args:
             return res  # TODO (go to a specific one)
 
         label = self._obj_label(self.cur)
@@ -277,14 +293,25 @@ class ConsoleV2(cmd.Cmd):
         print('\n'.join(res))
         return
 
-    def postcmd(self, stop, line):
-        print()  # TODO: better place to put this?
-        return stop
+    def do_go(self, args):
+        if len(args) != 1:
+            print('go command expects one argument')
+            return
 
-    def do_EOF(self, line):
-        "type Ctrl-D to exit"
-        print()
-        return True
+        self.history_idx += 1
+        self.history = self.history[:self.history_idx] + [int(args[0])]
+
+    def do_back(self, args):
+        if self.history_idx == 0:
+            print('already at earliest point in history')
+            return
+        self.history_idx -= 1
+
+    def do_forward(self, args):
+        if self.history_idx == (len(self.history) - 1):
+            print('already at latest point in history')
+            return
+        self.history_idx += 1
 
     def run(self):
         print("WELCOME TO OBJEX EXPLORER")
@@ -310,11 +337,6 @@ class Console(object):
         self.obj_id = obj_id
 
     def _obj_label(self, obj_id):
-        try:
-            from termcolor import colored
-        except ImportError:
-            colored = lambda s, color: s
-
         if self.reader.obj_is_type(obj_id):
             return colored("<type {}@{}>".format(
                 self.reader.typename(obj_id), obj_id), 'green')
@@ -343,10 +365,6 @@ class Console(object):
         return ref
 
     def _menu(self):
-        try:
-            from termcolor import colored
-        except ImportError:
-            colored = lambda s, color: s
 
         label = self._obj_label(self.obj_id)
         refers_to_obj = []
