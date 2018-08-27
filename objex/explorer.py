@@ -73,7 +73,7 @@ class Reader(object):
     def visible_memory_fraction(self):
         '''get the fraction of peak RSS that is accounted for'''
         return self.sql_val(
-            'SELECT 1.0 * sum(size) / 1000000 / (SELECT memory_mb from meta) FROM object, meta')
+            'SELECT 1.0 * sum(size) / 1024 / 1024 / (SELECT memory_mb from meta) FROM object, meta')
 
     def cost_by_type(self):
         '''get (typename, percent memory, number of instances) ordered by percent memory'''
