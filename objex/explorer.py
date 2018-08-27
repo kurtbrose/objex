@@ -198,7 +198,7 @@ class Reader(object):
                 print "depth", dst_depth, src_depth
                 return []  # depth limit exceeded
             if not dst_fringe or not src_fringe:
-                print "deadend", not(dst_fringe), dst_depth, not(src_fringe), src_depth, list(dst_child)[:5]
+                print "deadend", not(dst_fringe), dst_depth, not(src_fringe), src_depth, list(dst_child)[:10]
                 return []  # dead end without match
             if len(dst_fringe) < len(src_fringe):
                 dst_depth += 1
@@ -241,14 +241,8 @@ class Reader(object):
             paths.append(path)
         return paths
 
-    def find_path_to_module(self, obj_id):
-        '''
-        find how (if at all) this object is referenced from a module-global context
-        returns [[(obj-id, ref), (obj-id, ref), ...], ...]
-        where the first obj-id is a module
-        (obj_id itself is not included in the result)
-        '''
-        paths = self._find_paths_from_any(self.get_modules().values(), obj_id)
+    def _find_obj_ref_paths_from_any(self, src_obj_ids, dst_obj_id, limit=20):
+        paths = self._find_paths_from_any(src_obj_ids, dst_obj_id, limit)
         obj_ref_paths = []
         for path in paths:
             obj_ref_path = []
@@ -260,11 +254,31 @@ class Reader(object):
             obj_ref_paths.append(obj_ref_path)
         return obj_ref_paths
 
+    def find_path_to_module(self, obj_id):
+        '''
+        find how (if at all) this object is referenced from a module-global context
+        returns [[(obj-id, ref), (obj-id, ref), ...], ...]
+        where the first obj-id is a module
+        (obj_id itself is not included in the result)
+        '''
+        return self._find_obj_ref_paths_from_any(self.get_modules().values(), obj_id)
+
+    def find_path_to_frame(self, obj_id):
+        '''
+        find how (if at all) this object is referenced from a stack-frame
+        return [[(obj-id, ref), (obj-id, ref), ...], ..]
+        (same as find_path_to_module)
+        '''
+        return self._find_obj_ref_paths_from_any(self.sql_list('SELECT object FROM pyframe'), obj_id)
+
     def get_orphan_ids(self):
         '''
         return a list of the object ids that are not dst of any references
         '''
-        return self.sql_list('SELECT id FROM object WHERE NOT IN (SELECT dst FROM reference)')
+        return self.sql_list('SELECT id FROM object WHERE id NOT IN (SELECT dst FROM reference)')
+
+    def get_orphan_count(self):
+        return self.sql_val('SELECT count(*) FROM object WHERE id NOT IN (SELECT dst FROM reference)')
 
 
 class Console(object):

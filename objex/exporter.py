@@ -217,6 +217,7 @@ class _Writer(object):
         if mode == "object":
             if hasattr(obj, "__dict__"):
                 key_dst += [('.' + key, dst) for key, dst in obj.__dict__.items()]
+                key_dst.append(('.__dict__', obj.__dict__))
             try:
                 slots = obj.__class__.__slots__
             except AttributeError:
