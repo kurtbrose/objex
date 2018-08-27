@@ -8,9 +8,9 @@ try:
     import resource
 except ImportError:  # windows
     resource = None
+import random
 import shutil
 import sqlite3
-
 
 try:
     import colorama
@@ -122,9 +122,6 @@ class Reader(object):
     def obj_is_module(self, obj_id):
         return self.sql_val('SELECT EXISTS(SELECT 1 FROM module WHERE object = ?)', (obj_id,))
 
-    def obj_is_type(self, obj_id):
-        return self.sql_val('SELECT EXISTS(SELECT 1 FROM pytype WHERE object = ?)', (obj_id,))
-
     def typename(self, obj_id):
         '''name of an object that IS a type'''
         return self.sql_val('SELECT name FROM pytype WHERE object = ?', (obj_id,))
@@ -179,7 +176,7 @@ class ConsoleV2(cmd.Cmd):
 
     def __init__(self, reader, start=None):
         self.reader = reader
-        self.history = [start or 0]  # TODO: lookup
+        self.history = [start or 0]
         self.history_idx = 0
 
         self.cmd_history = []
@@ -200,13 +197,27 @@ class ConsoleV2(cmd.Cmd):
 
     def parseline(self, line):
         command, arg, line = cmd.Cmd.parseline(self, line)
-        if arg is None:
-            return command, arg, line
-        return command, arg.split(), line
+        if arg is not None:
+            arg = arg.split()
+        commands = [c for c in sorted(self.completenames(''), key=len)
+                    if c.startswith(command)]
+        if commands:
+            command = commands[0]
+        return command, arg, line
 
     def postcmd(self, stop, line):
-        print()  # TODO: better place to put this?
+        # print()  # TODO: better place to put this?
         return stop
+
+    def cmdloop(self, *a, **kw):
+        while 1:
+            try:
+                return cmd.Cmd.cmdloop(self, *a, **kw)
+            except KeyboardInterrupt:
+                print('^C')
+                continue
+        return
+
 
     def do_EOF(self, line):
         "type Ctrl-D to exit"
@@ -275,6 +286,7 @@ class ConsoleV2(cmd.Cmd):
                 res.append(' {}'.format(self._info_str(inst)))
 
         print('\n'.join(res))
+        print()
         return
 
     def do_out(self, args):
@@ -291,27 +303,65 @@ class ConsoleV2(cmd.Cmd):
         for ref, dst in out_ref:
             res.append(' {}: {}'.format(ref, self._info_str(dst)))
         print('\n'.join(res))
+        print()
+        return
+
+    def _to_id(self, obj_id):
+        if obj_id == 'random':
+            return random.randrange(self.reader.object_count())
+
+        try:
+            ret = int(obj_id)
+        except ValueError:
+            print('expected valid integer or "random" for object id, not: %r' % obj_id)
+            ret = None
+        return ret
+
+    def do_list(self, args=None):
+        if not args:
+            target = self.cur
+        else:
+            target = self._to_id(args[0])
+            if target is None:
+                return
+        if target == self.cur:
+            prefix = 'Now at:'
+        else:
+            prefix = 'Listing:'
+        print('')
+
+        try:
+            print(prefix, self._info_str(target))
+        except IndexError:
+            print('no object with id: %r' % target)
         return
 
     def do_go(self, args):
         if len(args) != 1:
             print('go command expects one argument')
             return
+        target = args[0]
+        target = self._to_id(target)
+        if target is None:
+            return
+        self.history = self.history[:self.history_idx] + [target]
+        self.history_idx = len(self.history) - 1
 
-        self.history_idx += 1
-        self.history = self.history[:self.history_idx] + [int(args[0])]
+        self.do_list()
 
     def do_back(self, args):
         if self.history_idx == 0:
             print('already at earliest point in history')
             return
         self.history_idx -= 1
+        self.do_list()
 
     def do_forward(self, args):
         if self.history_idx == (len(self.history) - 1):
             print('already at latest point in history')
             return
         self.history_idx += 1
+        self.do_list()
 
     def run(self):
         print("WELCOME TO OBJEX EXPLORER")
@@ -327,7 +377,7 @@ class ConsoleV2(cmd.Cmd):
             self.reader.object_count(),
         ))
         print()
-
+        self.do_list()
         return self.cmdloop()
 
 
