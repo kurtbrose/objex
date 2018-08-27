@@ -218,6 +218,8 @@ class _Writer(object):
             if hasattr(obj, "__dict__"):
                 key_dst += [('.' + key, dst) for key, dst in obj.__dict__.items()]
                 key_dst.append(('.__dict__', obj.__dict__))
+            if hasattr(obj, "__module__"):
+                key_dst.append(('__module__', obj.__module__))
             try:
                 slots = obj.__class__.__slots__
             except AttributeError:
@@ -234,7 +236,11 @@ class _Writer(object):
                     pass  # just because a slot exists doesn't mean it has a value
         if mode == 'frame':  # expensive to handle, but pretty rare
             key_dst += [(".locals[{!r}]".format(key), val) for key, val in obj.f_locals.items()]
-            key_dst.append((".f_globals", obj.f_globals))
+            key_dst += [
+                (".f_globals", obj.f_globals),
+                (".f_back", obj.f_back),
+                (".f_code", obj.f_code),
+            ]
         if mode == 'func':
             '''
             >>> a = 1
@@ -252,11 +258,13 @@ class _Writer(object):
             '''
             if obj.func_closure:  # (maybe) grab function closure
                 for varname, cell in zip(obj.func_code.co_freevars, obj.func_closure):
-                    key_dst.append((varname, cell.cell_contents))
+                    key_dst.append((".locals[{!r}]".format(varname), cell.cell_contents))
             args, varargs, keywords, defaults = inspect.getargspec(obj)
             if defaults:  # (maybe) grab function defaults
                 for name, default in zip(reversed(args), reversed(defaults)):
                     key_dst.append((".defaults[{!r}]".format(name), default))
+            key_dst.append(("func_code", obj.func_code))
+            key_dst.append(("__module__", obj.__module__))
         self.conn.executemany(
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
             [(db_id, self._ensure_db_id(dst), key) for key, dst in key_dst])
