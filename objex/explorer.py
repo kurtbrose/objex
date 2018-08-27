@@ -174,6 +174,8 @@ class Reader(object):
 class ConsoleV2(cmd.Cmd):
     prompt = 'objex> '
 
+    doc_leader = '''\nobjex memory explorer v0.9.0\n'''
+
     def __init__(self, reader, start=None):
         self.reader = reader
         self.history = [start or 0]
@@ -199,8 +201,9 @@ class ConsoleV2(cmd.Cmd):
         command, arg, line = cmd.Cmd.parseline(self, line)
         if arg is not None:
             arg = arg.split()
+        # we do this bc self.complete() is stateful
         commands = [c for c in sorted(self.completenames(''), key=len)
-                    if c.startswith(command)]
+                    if command and c.startswith(command)]
         if commands:
             command = commands[0]
         return command, arg, line
@@ -217,7 +220,6 @@ class ConsoleV2(cmd.Cmd):
                 print('^C')
                 continue
         return
-
 
     def do_EOF(self, line):
         "type Ctrl-D to exit"
@@ -376,6 +378,7 @@ class ConsoleV2(cmd.Cmd):
             self.reader.visible_memory_fraction() * 100,
             self.reader.object_count(),
         ))
+        print('type "help" for options')
         print()
         self.do_list()
         return self.cmdloop()
