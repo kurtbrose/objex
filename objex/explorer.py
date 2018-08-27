@@ -1,16 +1,16 @@
-import gc
-import inspect
+
+from __future__ import print_function
+
 import os
+from cmd import Cmd
+
 try:
     import resource
 except ImportError:  # windows
     resource = None
+import random
 import shutil
-import sys
-from socket import getfqdn
 import sqlite3
-import time
-import types
 
 try:
     import colorama
@@ -18,6 +18,11 @@ except ImportError:
     pass
 else:
     colorama.init()
+try:
+    from termcolor import colored
+except ImportError:
+    colored = lambda s, color: s
+
 
 from .schema import _INDICES
 from .dbutils import _run_ddl
@@ -108,14 +113,14 @@ class Reader(object):
     def refers_to_obj_count(self, obj_id):
         return self.sql_val('SELECT count(*) FROM reference WHERE dst = ?', (obj_id,))
 
+    def obj_is_type(self, obj_id):
+        return self.sql_val('SELECT EXISTS(SELECT 1 FROM pytype WHERE pytype.object = ?)', (obj_id,))
+
     def obj_is_func(self, obj_id):
         return self.sql_val('SELECT EXISTS(SELECT 1 FROM function WHERE object = ?)', (obj_id,))
 
     def obj_is_module(self, obj_id):
         return self.sql_val('SELECT EXISTS(SELECT 1 FROM module WHERE object = ?)', (obj_id,))
-
-    def obj_is_type(self, obj_id):
-        return self.sql_val('SELECT EXISTS(SELECT 1 FROM pytype WHERE object = ?)', (obj_id,))
 
     def typename(self, obj_id):
         '''name of an object that IS a type'''
@@ -195,10 +200,10 @@ class Reader(object):
         dst_depth = src_depth = 0
         while not src_fringe & dst_fringe:
             if dst_depth + src_depth > limit:
-                print "depth", dst_depth, src_depth
+                print("depth", dst_depth, src_depth)
                 return []  # depth limit exceeded
             if not dst_fringe or not src_fringe:
-                print "deadend", not(dst_fringe), dst_depth, not(src_fringe), src_depth, list(dst_child)[:10]
+                print("deadend", not(dst_fringe), dst_depth, not(src_fringe), src_depth, list(dst_child)[:10])
                 return []  # dead end without match
             if len(dst_fringe) < len(src_fringe):
                 dst_depth += 1
@@ -280,18 +285,89 @@ class Reader(object):
     def get_orphan_count(self):
         return self.sql_val('SELECT count(*) FROM object WHERE id NOT IN (SELECT dst FROM reference)')
 
+class ConsoleV2(Cmd):
+    prompt = 'objex> '
 
-class Console(object):
-    def __init__(self, reader, obj_id=0):
+    doc_leader = '''\nobjex memory explorer v0.9.0\n'''
+
+    def __init__(self, reader, start=None):
         self.reader = reader
-        self.obj_id = obj_id
+        self.history = [start or 0]
+        self.history_idx = 0
+
+        self.cmd_history = []
+
+        Cmd.__init__(self)  # old style class :'(
+
+    @property
+    def cur(self):
+        return self.history[self.history_idx]
+
+    def precmd(self, line):
+        if not self.cmd_history:
+            return line
+        try:
+            shortcut_idx = int(line) - 1
+        except (ValueError, TypeError):
+            return line
+
+        for cmd_hist in reversed(self.cmd_history):
+            options = cmd_hist.get('options', [])
+            if options:
+                break
+        try:
+            ret = options[shortcut_idx]
+        except (KeyError, IndexError):
+            print('expected a valid command or options 1 - %s, not %s, try again.'
+                  % (len(options), shortcut_idx + 1))
+            ret = None
+        return ret
+
+    # Cmd customizations/overrides
+    def onecmd(self, line):
+        if line is None:
+            return
+        cmd, args, line = self.parseline(line)
+        if line and line != 'EOF' and cmd and self.completenames(cmd):
+            self.cmd_history.append({'line': line, 'cmd': cmd, 'args': args, 'options': []})
+        try:
+            return Cmd.onecmd(self, line)
+        except Exception:
+            # TODO: better exception handling can go here, maybe pdb with OBJEX_DEBUG=True
+            self.cmd_history.pop()
+            raise
+
+    def parseline(self, line):
+        # keep this stateless
+        command, arg, line = Cmd.parseline(self, line)
+        if arg is not None:
+            arg = arg.split()
+        # we do this bc self.complete() is stateful
+        commands = [c for c in sorted(self.completenames(''), key=len)
+                    if command and c.startswith(command)]
+        if commands:
+            command = commands[0]
+        return command, arg, line
+
+    def postcmd(self, stop, line):
+        # print()  # TODO: better place to put this?
+        return stop
+
+    def cmdloop(self, *a, **kw):
+        while 1:
+            try:
+                return Cmd.cmdloop(self, *a, **kw)
+            except KeyboardInterrupt:
+                print('^C')
+                continue
+        return
+
+    def do_EOF(self, line):
+        "type Ctrl-D to exit"
+        print()
+        return True
 
     def _obj_label(self, obj_id):
-        try:
-            from termcolor import colored
-        except ImportError:
-            colored = lambda s, color: s
-
         if self.reader.obj_is_type(obj_id):
             return colored("<type {}@{}>".format(
                 self.reader.typename(obj_id), obj_id), 'green')
@@ -301,6 +377,188 @@ class Console(object):
         if self.reader.obj_is_func(obj_id):
             return "<function {}@{}>".format(
                 self.reader.funcname(obj_id), obj_id)
+        return colored("<{}@{}>".format(
+            self.reader.obj_typename(obj_id), obj_id), 'red')
+
+    def _ref(self, ref):
+        '''translate ref for display'''
+        if ref[0].isdigit():
+            return "[{}]".format(ref)
+        if ref[0] == '@':
+            return "[" + self._obj_label(int(ref[1:])) + "]"
+        return ref
+
+    def _info_str(self, obj_id):
+        if self.reader.obj_is_type(obj_id):
+            return "{label} (instances={num_instances:,})".format(
+                label=self._obj_label(obj_id),
+                obj_id=obj_id,
+                num_instances=self.reader.obj_instance_count(obj_id),
+            )
+        obj_len = self.reader.obj_len(obj_id)
+        if obj_len is None:
+            return '{label} (size={size})'.format(
+                label=self._obj_label(obj_id),
+                size=self.reader.obj_size(obj_id))
+
+        return '{label} (size={size}, len={len})'.format(
+            label=self._obj_label(obj_id),
+            size=self.reader.obj_size(obj_id),
+            len=obj_len)
+
+    def _print_option(self, shortcut, option):
+        cur_options = self.cmd_history[-1]['options']
+
+        cur_options.append(shortcut)
+        res = '%s - %s' % (str(len(cur_options)).rjust(2), option)
+        print(res)
+        return res
+
+    def do_in(self, args):
+        "View inbound references of the current object"
+        res = []
+        in_ref = self.reader.refers_to_obj(self.cur)
+        if args:
+            return res  # TODO (go to a specific one)
+
+        label = self._obj_label(self.cur)
+        print("{:,} objects refer to {}:".format(self.reader.refers_to_obj_count(self.cur),
+                                                 label))
+
+        for ref, src in in_ref:
+            self._print_option('go %s' % src, ' {}{}'.format(self._obj_label(src), self._ref(ref)))
+
+        print()
+        if self.reader.obj_is_type(self.cur):
+            print('{:,} instances of {}:'.format(self.reader.obj_instance_count(self.cur),
+                                                 label))
+
+            for inst in self.reader.obj_instances(self.cur):
+                self._print_option('go %s' % inst, ' {}'.format(self._info_str(inst)))
+
+        print()
+        return
+
+    def do_out(self, args):
+        "View outbound references of the current object"
+        res = []
+        out_ref = self.reader.obj_refers_to(self.cur)
+        if args:
+            return res  # TODO (go to a specific one)
+
+        label = self._obj_label(self.cur)
+        print("{:,} references to {}:".format(self.reader.obj_refers_to_count(self.cur),
+                                              label))
+
+        for ref, dst in out_ref:
+            option_text = ' {}: {}'.format(ref, self._info_str(dst))
+            self._print_option('go %s' % dst, option_text)
+
+        print()
+        return
+
+    def _to_id(self, obj_id):
+        if obj_id == 'random':
+            return random.randrange(self.reader.object_count())
+
+        try:
+            ret = int(obj_id)
+        except ValueError:
+            print('expected valid integer or "random" for object id, not: %r' % obj_id)
+            ret = None
+        return ret
+
+    def _global_ref_chains(self):
+        '''fetch the global reference paths to cursor object'''
+        fmt_paths = []
+        for path in self.reader.find_path_to_module(self.cur):
+            fmt_path = []
+            for obj_id, ref in path:
+                fmt_path.append(self._obj_label(obj_id) + self._ref(ref))
+            fmt_paths.append(''.join(fmt_path))
+        return fmt_paths
+
+    def do_list(self, args=None):
+        if not args:
+            target = self.cur
+        else:
+            target = self._to_id(args[0])
+            if target is None:
+                return
+        if target == self.cur:
+            prefix = 'Now at:'
+        else:
+            prefix = 'Listing:'
+        print('')
+
+        try:
+            print(prefix, self._info_str(target))
+        except IndexError:
+            print('no object with id: %r' % target)
+            return
+
+        global_refs = self._global_ref_chains()
+        if global_refs:
+            print('  %s global references found: %s'
+                  % (len(global_refs), ', '.join(global_refs)))
+
+        return
+
+    def do_go(self, args):
+        if len(args) != 1:
+            print('go command expects one argument')
+            return
+        target = args[0]
+        target = self._to_id(target)
+        if target is None:
+            return
+        self.history_idx = len(self.history)
+        self.history = self.history[:self.history_idx] + [target]
+
+        self.do_list()
+
+    def do_back(self, args):
+        if self.history_idx == 0:
+            print('already at earliest point in history')
+            return
+        self.history_idx -= 1
+        self.do_list()
+
+    def do_forward(self, args):
+        if self.history_idx == (len(self.history) - 1):
+            print('already at latest point in history')
+            return
+        self.history_idx += 1
+        self.do_list()
+
+    def run(self):
+        print("WELCOME TO OBJEX EXPLORER")
+        print('now exploring "{}" collected from {} at {}'.format(
+            self.reader.path,
+            self.reader.sql_val('SELECT hostname FROM meta'),
+            self.reader.sql_val('SELECT ts FROM meta'),
+        ))
+        print("RSS memory was {:.2f}MiB; {:0.01f}MiB ({:0.01f}%) found in {:,} python objects".format(
+            self.reader.sql_val('SELECT memory_mb FROM meta'),
+            self.reader.sql_val('SELECT SUM(size) FROM object') / 1024 / 1024,
+            self.reader.visible_memory_fraction() * 100,
+            self.reader.object_count(),
+        ))
+        print('type "help" for options')
+        print()
+        self.do_list()
+        return self.cmdloop()
+
+
+class Console(object):
+    def __init__(self, reader, obj_id=0):
+        self.reader = reader
+        self.obj_id = obj_id
+
+    def _obj_label(self, obj_id):
+        if self.reader.obj_is_type(obj_id):
+            return colored("<type {}@{}>".format(
+                self.reader.typename(obj_id), obj_id), 'green')
         return colored("<{}@{}>".format(
             self.reader.obj_typename(obj_id), obj_id), 'red')
 
@@ -325,21 +583,7 @@ class Console(object):
             return "[" + self._obj_label(int(ref[1:])) + "]"
         return ref
 
-    def _global_ref_chains(self):
-        '''fetch the global reference paths to cursor object'''
-        fmt_paths = []
-        for path in self.reader.find_path_to_module(self.obj_id):
-            fmt_path = []
-            for obj_id, ref in path:
-                fmt_path.append(self._obj_label(obj_id) + self._ref(ref))
-            fmt_paths.append(''.join(fmt_path))
-        return fmt_paths
-
     def _menu(self):
-        try:
-            from termcolor import colored
-        except ImportError:
-            colored = lambda s, color: s
 
         label = self._obj_label(self.obj_id)
         refers_to_obj = []
