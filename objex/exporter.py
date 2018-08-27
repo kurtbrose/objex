@@ -172,6 +172,10 @@ class _Writer(object):
             )
 
     def _module_name2obj_id(self, name):
+        if not isinstance(name, str):
+            # TODO: sometimes None, sometimes random stuff (property?)
+            # is there a better heuristic for this?
+            return None
         if name not in self.modules_map:
             self.modules_map[name] = types.ModuleType(name)
         return self._ensure_db_id(self.modules_map[name])
@@ -213,6 +217,7 @@ class _Writer(object):
         if mode == "object":
             if hasattr(obj, "__dict__"):
                 key_dst += [('.' + key, dst) for key, dst in obj.__dict__.items()]
+                key_dst.append(('.__dict__', obj.__dict__))
             try:
                 slots = obj.__class__.__slots__
             except AttributeError:

@@ -20,7 +20,7 @@ CREATE TABLE object (
 CREATE TABLE pytype (
     id INTEGER PRIMARY KEY,
     object INTEGER NOT NULL,
-    module INTEGER NOT NULL, -- object-id of module
+    module INTEGER, -- object-id of module
     name TEXT NOT NULL -- typenames are okay
 );
 
@@ -64,7 +64,7 @@ CREATE TABLE function (
     object INTEGER NOT NULL,
     func_name TEXT NOT NULL,
     func_code_obj_id INTEGER NOT NULL, -- object-id of pycode
-    module_obj_id INTEGER NOT NULL -- object-id of module
+    module_obj_id INTEGER -- object-id of module
 );
 
 CREATE TABLE reference (
