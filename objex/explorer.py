@@ -210,7 +210,7 @@ class Reader(object):
                 nxt_dst_fringe = set()
                 for obj_id in dst_fringe:
                     parent_ids = self.sql_list(
-                        'SELECT src FROM reference WHERE dst = ?', (obj_id,))
+                        "SELECT src FROM reference WHERE dst = ? OR ref = '@' || ?", (obj_id, str(obj_id)))
                     for parent_id in parent_ids:
                         if parent_id in dst_child:
                             continue  # already found it earlier
@@ -280,7 +280,9 @@ class Reader(object):
         '''
         return a list of the object ids that are not dst of any references
         '''
-        return self.sql_list('SELECT id FROM object WHERE id NOT IN (SELECT dst FROM reference)')
+        return self.sql_list(
+            "SELECT id FROM object WHERE id NOT IN (SELECT dst FROM reference) AND NOT EXISTS ("
+            "SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT) )")
 
     def get_orphan_count(self):
         return self.sql_val('SELECT count(*) FROM object WHERE id NOT IN (SELECT dst FROM reference)')
