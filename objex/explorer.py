@@ -310,17 +310,16 @@ class ConsoleV2(Cmd):
             shortcut_idx = int(line) - 1
         except (ValueError, TypeError):
             return line
-        options = self.cmd_history[-1].get('options')
-        # should options persist until the next time a command
-        # updates the options (aka should I keep looking through
-        # history until the options are not empty)?
-        if not options:
-            return line
+
+        for cmd_hist in reversed(self.cmd_history):
+            options = cmd_hist.get('options', [])
+            if options:
+                break
         try:
             ret = options[shortcut_idx]
         except (KeyError, IndexError):
             print('expected a valid command or options 1 - %s, not %s, try again.'
-                  % (len(options), shortcut_idx))
+                  % (len(options), shortcut_idx + 1))
             ret = None
         return ret
 
