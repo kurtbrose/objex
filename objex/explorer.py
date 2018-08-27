@@ -144,15 +144,21 @@ class Reader(object):
             'SELECT id FROM object WHERE pytype = (SELECT id FROM pytype WHERE name = ?)',
             (typename,))
 
+    def get_modules(self):
+        '''
+        return {name: obj-id} for all modules
+        '''
+        return dict(self.sql('SELECT name, object FROM module'))
+
     def get_threads(self):
         '''
         reconstructs the active threads, returns {thread_id: [trace]}
         '''
-        thread_frames = {}
+        thread_stack_map = {}
         thread_frames = self.sql(
             'SELECT thread_id, (SELECT id FROM pyframe WHERE object = stack_obj_id) FROM thread')
         for thread_id, frame_id in thread_frames:
-            frames_ids = []
+            frame_ids = []
             while frame_id:
                 frame_ids.append(frame_id)
                 frame_id = self.sql_val(
@@ -160,11 +166,105 @@ class Reader(object):
                         'SELECT f_back_obj_id FROM pyframe WHERE id = ?)',
                     (frame_id,))
             frame_ids.reverse()
-            thread_frames[thread_id] = [
+            thread_stack_map[thread_id] = [
                 self.sql_val('SELECT trace FROM pyframe WHERE id = ?', (frame_id,))
                 for frame_id in frame_ids]
         return thread_frames
 
+    def _find_paths_from_any(self, src_obj_ids, dst_obj_id, limit=20):
+        '''
+        find the shortest path between any src and dst a variant of A*
+        algorithm over the directed graph of references
+
+        https://en.wikipedia.org/wiki/A*_search_algorithm
+
+        returns several minimal paths in a list:
+        [ [src_obj_id, obj_id, .... , dst_obj_id], ... ]
+
+        (this algorithm is guaranteed to return a minimum length path,
+        but may not return all minimum length paths)
+        '''
+        # {obj_id: parent} "towards" the sources
+        for src_obj_id in src_obj_ids:
+            assert type(src_obj_id) in (int, long), ("not an object id", src_obj_id)
+        src_parent = {obj_id: None for obj_id in src_obj_ids}
+        src_fringe = set(src_parent)  # "fringe" meaning the "surface", nodes that touch exterior nodes
+        # {obj_id: child} "towards" the destination
+        dst_child = {dst_obj_id: None}
+        dst_fringe = set(dst_child)
+        dst_depth = src_depth = 0
+        while not src_fringe & dst_fringe:
+            if dst_depth + src_depth > limit:
+                print "depth", dst_depth, src_depth
+                return []  # depth limit exceeded
+            if not dst_fringe or not src_fringe:
+                print "deadend", not(dst_fringe), dst_depth, not(src_fringe), src_depth, list(dst_child)[:5]
+                return []  # dead end without match
+            if len(dst_fringe) < len(src_fringe):
+                dst_depth += 1
+                nxt_dst_fringe = set()
+                for obj_id in dst_fringe:
+                    parent_ids = self.sql_list(
+                        'SELECT src FROM reference WHERE dst = ?', (obj_id,))
+                    for parent_id in parent_ids:
+                        if parent_id in dst_child:
+                            continue  # already found it earlier
+                        nxt_dst_fringe.add(parent_id)
+                        dst_child[parent_id] = obj_id
+                dst_fringe = nxt_dst_fringe
+            else:
+                src_depth += 1
+                nxt_src_fringe = set()
+                for obj_id in src_fringe:
+                    child_ids = self.sql_list(
+                        'SELECT dst FROM reference WHERE src = ?', (obj_id,))
+                    for child_id in child_ids:
+                        if child_id in src_parent:
+                            continue  # already found it
+                        nxt_src_fringe.add(child_id)
+                        src_parent[child_id] = obj_id
+                src_fringe = nxt_src_fringe
+        # build out in both directions from each connection
+        contact_points = src_fringe & dst_fringe
+        paths = []
+        for obj_id in contact_points:
+            path = []
+            cur = obj_id
+            while cur is not None:
+                path.append(cur)
+                cur = src_parent[cur]
+            path.reverse()
+            cur = path.pop()  # avoid doubling-up
+            while cur is not None:
+                path.append(cur)
+                cur = dst_child[cur]
+            paths.append(path)
+        return paths
+
+    def find_path_to_module(self, obj_id):
+        '''
+        find how (if at all) this object is referenced from a module-global context
+        returns [[(obj-id, ref), (obj-id, ref), ...], ...]
+        where the first obj-id is a module
+        (obj_id itself is not included in the result)
+        '''
+        paths = self._find_paths_from_any(self.get_modules().values(), obj_id)
+        obj_ref_paths = []
+        for path in paths:
+            obj_ref_path = []
+            for i in range(len(path) - 1):
+                ref = self.sql_val(
+                    'SELECT ref FROM reference WHERE src = ? and dst = ?',
+                    (path[i], path[i + 1]))
+                obj_ref_path.append((path[i], ref))
+            obj_ref_paths.append(obj_ref_path)
+        return obj_ref_paths
+
+    def get_orphan_ids(self):
+        '''
+        return a list of the object ids that are not dst of any references
+        '''
+        return self.sql_list('SELECT id FROM object WHERE NOT IN (SELECT dst FROM reference)')
 
 
 class Console(object):
@@ -211,6 +311,16 @@ class Console(object):
             return "[" + self._obj_label(int(ref[1:])) + "]"
         return ref
 
+    def _global_ref_chains(self):
+        '''fetch the global reference paths to cursor object'''
+        fmt_paths = []
+        for path in self.reader.find_path_to_module(self.obj_id):
+            fmt_path = []
+            for obj_id, ref in path:
+                fmt_path.append(self._obj_label(obj_id) + self._ref(ref))
+            fmt_paths.append(''.join(fmt_path))
+        return fmt_paths
+
     def _menu(self):
         try:
             from termcolor import colored
@@ -234,7 +344,7 @@ class Console(object):
             "{:,} objects refer to {}...".format(
                 self.reader.refers_to_obj_count(self.obj_id),
                 label)
-        ] + refers_to_obj + [
+        ] + self._global_ref_chains() + refers_to_obj + [
             "{} refers to {:,} objects...".format(
                 label,
                 self.reader.obj_refers_to_count(self.obj_id))
