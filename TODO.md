@@ -31,11 +31,11 @@ first chars in the list below: 'bdfghilmopstuw'  (keep updated)
 
 Other:
 
-* need current listing
-* shortcuts
 * "in all" -> pager list (with no shortcuts)
 * manually traversed path so far (needs normalization, in the case of cycles)
 * automated audit checks: e.g., detect leaks via frames (i.e., via tracebacks hanging around)
+* aliases: @mod_name, @module.module_global name, @TypeName?
+* prompt toolkit
 
 ## Metrics
 

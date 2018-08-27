@@ -328,7 +328,11 @@ class Console(Cmd):
     def onecmd(self, line):
         if line is None:
             return
+        orig_line = line
         cmd, args, line = self.parseline(line)
+        if cmd == 'exit' and not orig_line.strip() == 'exit':
+            print('type "exit" to quit the console')
+            return
         if line and line != 'EOF' and cmd and self.completenames(cmd):
             self.cmd_history.append({'line': line, 'cmd': cmd, 'args': args, 'options': []})
         try:
@@ -368,6 +372,11 @@ class Console(Cmd):
         print()
         return True
 
+    def do_exit(self, line):
+        "exits the objex console"
+        print()
+        return True
+
     def _obj_label(self, obj_id):
         if self.reader.obj_is_type(obj_id):
             return colored("<type {}#{}>".format(
@@ -385,7 +394,7 @@ class Console(Cmd):
         '''translate ref for display'''
         if ref[0].isdigit():
             return "[{}]".format(ref)
-        if ref[0] == '#':
+        if ref[0] == '@':
             return "[" + self._obj_label(int(ref[1:])) + "]"
         return ref
 
