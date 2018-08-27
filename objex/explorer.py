@@ -285,7 +285,8 @@ class Reader(object):
     def get_orphan_count(self):
         return self.sql_val('SELECT count(*) FROM object WHERE id NOT IN (SELECT dst FROM reference)')
 
-class ConsoleV2(Cmd):
+
+class Console(Cmd):
     prompt = 'objex> '
 
     doc_leader = '''\nobjex memory explorer v0.9.0\n'''
