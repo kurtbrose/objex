@@ -344,8 +344,8 @@ class ConsoleV2(cmd.Cmd):
         target = self._to_id(target)
         if target is None:
             return
+        self.history_idx = len(self.history)
         self.history = self.history[:self.history_idx] + [target]
-        self.history_idx = len(self.history) - 1
 
         self.do_list()
 
