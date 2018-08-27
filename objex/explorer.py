@@ -2,7 +2,7 @@
 from __future__ import print_function
 
 import os
-import cmd
+from cmd import Cmd
 
 try:
     import resource
@@ -171,7 +171,7 @@ class Reader(object):
         return thread_frames
 
 
-class ConsoleV2(cmd.Cmd):
+class ConsoleV2(Cmd):
     prompt = 'objex> '
 
     doc_leader = '''\nobjex memory explorer v0.9.0\n'''
@@ -183,22 +183,50 @@ class ConsoleV2(cmd.Cmd):
 
         self.cmd_history = []
 
-        cmd.Cmd.__init__(self)  # old style class :'(
+        Cmd.__init__(self)  # old style class :'(
 
     @property
     def cur(self):
         return self.history[self.history_idx]
 
-    # cmd.Cmd customizations/overrides
-    def onecmd(self, line):
+    def precmd(self, line):
+        if not self.cmd_history:
+            return line
         try:
-            return cmd.Cmd.onecmd(self, line)
+            shortcut_idx = int(line) - 1
+        except (ValueError, TypeError):
+            return line
+        options = self.cmd_history[-1].get('options')
+        # should options persist until the next time a command
+        # updates the options (aka should I keep looking through
+        # history until the options are not empty)?
+        if not options:
+            return line
+        try:
+            ret = options[shortcut_idx]
+        except (KeyError, IndexError):
+            print('expected a valid command or options 1 - %s, not %s, try again.'
+                  % (len(options), shortcut_idx))
+            ret = None
+        return ret
+
+    # Cmd customizations/overrides
+    def onecmd(self, line):
+        if line is None:
+            return
+        cmd, args, line = self.parseline(line)
+        if line and line != 'EOF' and cmd and self.completenames(cmd):
+            self.cmd_history.append({'line': line, 'cmd': cmd, 'args': args, 'options': []})
+        try:
+            return Cmd.onecmd(self, line)
         except Exception:
             # TODO: better exception handling can go here, maybe pdb with OBJEX_DEBUG=True
+            self.cmd_history.pop()
             raise
 
     def parseline(self, line):
-        command, arg, line = cmd.Cmd.parseline(self, line)
+        # keep this stateless
+        command, arg, line = Cmd.parseline(self, line)
         if arg is not None:
             arg = arg.split()
         # we do this bc self.complete() is stateful
@@ -215,7 +243,7 @@ class ConsoleV2(cmd.Cmd):
     def cmdloop(self, *a, **kw):
         while 1:
             try:
-                return cmd.Cmd.cmdloop(self, *a, **kw)
+                return Cmd.cmdloop(self, *a, **kw)
             except KeyboardInterrupt:
                 print('^C')
                 continue
@@ -265,6 +293,14 @@ class ConsoleV2(cmd.Cmd):
             size=self.reader.obj_size(obj_id),
             len=obj_len)
 
+    def _print_option(self, shortcut, option):
+        cur_options = self.cmd_history[-1]['options']
+
+        cur_options.append(shortcut)
+        res = '%s - %s' % (str(len(cur_options)).rjust(2), option)
+        print(res)
+        return res
+
     def do_in(self, args):
         "View inbound references of the current object"
         res = []
@@ -273,21 +309,20 @@ class ConsoleV2(cmd.Cmd):
             return res  # TODO (go to a specific one)
 
         label = self._obj_label(self.cur)
-        res.append("{:,} objects refer to {}:".format(
-            self.reader.refers_to_obj_count(self.cur), label))
+        print("{:,} objects refer to {}:".format(self.reader.refers_to_obj_count(self.cur),
+                                                 label))
 
         for ref, src in in_ref:
-            res.append(' {}{}'.format(self._obj_label(src), self._ref(ref)))
+            self._print_option('go %s' % src, ' {}{}'.format(self._obj_label(src), self._ref(ref)))
 
-        res.append('')
+        print()
         if self.reader.obj_is_type(self.cur):
-            res.append('{:,} instances of {}:'.format(self.reader.obj_instance_count(self.cur),
-                                                      label))
+            print('{:,} instances of {}:'.format(self.reader.obj_instance_count(self.cur),
+                                                 label))
 
             for inst in self.reader.obj_instances(self.cur):
-                res.append(' {}'.format(self._info_str(inst)))
+                self._print_option('go %s' % inst, ' {}'.format(self._info_str(inst)))
 
-        print('\n'.join(res))
         print()
         return
 
@@ -299,12 +334,13 @@ class ConsoleV2(cmd.Cmd):
             return res  # TODO (go to a specific one)
 
         label = self._obj_label(self.cur)
-        res.append("{:,} references to {}:".format(self.reader.obj_refers_to_count(self.cur),
-                                                   label))
+        print("{:,} references to {}:".format(self.reader.obj_refers_to_count(self.cur),
+                                              label))
 
         for ref, dst in out_ref:
-            res.append(' {}: {}'.format(ref, self._info_str(dst)))
-        print('\n'.join(res))
+            option_text = ' {}: {}'.format(ref, self._info_str(dst))
+            self._print_option('go %s' % dst, option_text)
+
         print()
         return
 
