@@ -11,6 +11,8 @@
 
 ## Command grammar
 
+first chars in the list below: 'bdfghilmopstuw'  (keep updated)
+
 * back
 * forward
 * mark - flag an object as interesting
@@ -23,6 +25,7 @@
 * where - if a frame, includes stack, if a type, includes mro, always gives some idea of orientation (traversal path history)
 * history
 * path
+* top - high-level statistics (most references, most central, etc.)
 * search?
 * python/sql?
 

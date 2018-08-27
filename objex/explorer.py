@@ -370,22 +370,22 @@ class Console(Cmd):
 
     def _obj_label(self, obj_id):
         if self.reader.obj_is_type(obj_id):
-            return colored("<type {}@{}>".format(
+            return colored("<type {}#{}>".format(
                 self.reader.typename(obj_id), obj_id), 'green')
         if self.reader.obj_is_module(obj_id):
-            return "<module {}@{}>".format(
+            return "<module {}#{}>".format(
                 self.reader.modulename(obj_id), obj_id)
         if self.reader.obj_is_func(obj_id):
-            return "<function {}@{}>".format(
+            return "<function {}#{}>".format(
                 self.reader.funcname(obj_id), obj_id)
-        return colored("<{}@{}>".format(
+        return colored("<{}#{}>".format(
             self.reader.obj_typename(obj_id), obj_id), 'red')
 
     def _ref(self, ref):
         '''translate ref for display'''
         if ref[0].isdigit():
             return "[{}]".format(ref)
-        if ref[0] == '@':
+        if ref[0] == '#':
             return "[" + self._obj_label(int(ref[1:])) + "]"
         return ref
 
@@ -534,7 +534,7 @@ class Console(Cmd):
 
     def run(self):
         print("WELCOME TO OBJEX EXPLORER")
-        print('now exploring "{}" collected from {} at {}'.format(
+        print('Now exploring "{}" collected from {} at {}'.format(
             self.reader.path,
             self.reader.sql_val('SELECT hostname FROM meta'),
             self.reader.sql_val('SELECT ts FROM meta'),
@@ -545,7 +545,7 @@ class Console(Cmd):
             self.reader.visible_memory_fraction() * 100,
             self.reader.object_count(),
         ))
-        print('type "help" for options')
+        print('(Type "help" for options.)')
         print()
         self.do_list()
         return self.cmdloop()
