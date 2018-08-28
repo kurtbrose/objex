@@ -139,6 +139,9 @@ class Reader(object):
     def obj_is_module(self, obj_id):
         return self.sql_val('SELECT EXISTS(SELECT 1 FROM module WHERE object = ?)', (obj_id,))
 
+    def obj_is_frame(self, obj_id):
+        return self.sql_val('SELECT EXISTS(SELECT 1 FROM pyframe WHERE object = ?)', (obj_id,))
+
     def typename(self, obj_id):
         '''name of an object that IS a type'''
         return self.sql_val('SELECT name FROM pytype WHERE object = ?', (obj_id,))
@@ -529,14 +532,23 @@ class Console(Cmd):
         return ret
 
     def _global_ref_chains(self):
-        '''fetch the global reference paths to cursor object'''
+        '''fetch the global reference paths to current object'''
         fmt_paths = []
         for path in self.reader.find_path_to_module(self.cur):
             fmt_path = []
             for obj_id, ref in path:
                 fmt_path.append(self._obj_label(obj_id) + self._ref(ref))
-            full_path = ''.join(fmt_path) or '__builtin__'
-            fmt_paths.append(full_path)
+            fmt_paths.append(''.join(fmt_path))
+        return fmt_paths
+
+    def _local_ref_chains(self):
+        '''fetch the local reference paths to current object'''
+        fmt_paths = []
+        for path in self.reader.find_path_to_frame(self.cur):
+            fmt_path = []
+            for obj_id, ref in path:
+                fmt_path.append(self._obj_label(obj_id) + self._ref(ref))
+            fmt_paths.append(''.join(fmt_path))
         return fmt_paths
 
     def do_list(self, args=None):
@@ -558,10 +570,17 @@ class Console(Cmd):
             print('no object with id: %r' % target)
             return
 
-        global_refs = self._global_ref_chains()
-        if global_refs:
-            print('  %s global references found: %s'
-                  % (len(global_refs), ', '.join(global_refs)))
+        if not self.reader.obj_is_module(target):
+            global_refs = self._global_ref_chains()
+            if global_refs:
+                print('  %s global references found: %s'
+                      % (len(global_refs), ', '.join(global_refs)))
+
+        if not self.reader.obj_is_frame(target):
+            local_refs = self._local_ref_chains()
+            if local_refs:
+                print('  %s local references found: %s'
+                      % (len(local_refs), ', '.join(local_refs)))
 
         return
 
