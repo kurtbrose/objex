@@ -294,7 +294,10 @@ class _Writer(object):
         add all of the current frames
         '''
         cur_frames = sys._current_frames()
+        ignore_cur = sys._getframe()
         for thread_id, frame in cur_frames.items():
+            if frame is ignore_cur:
+                continue  # don't log the stack that is taking the snapshot
             self.conn.execute(
                 "INSERT INTO thread (stack_obj_id, thread_id) VALUES (?, ?)",
                 (self._ensure_db_id(frame, refs=2), thread_id))

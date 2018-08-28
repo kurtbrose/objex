@@ -381,6 +381,14 @@ class Reader(object):
         """get the most referenced objects (by entries in reference table)"""
         return self.sql("SELECT count(*), dst FROM reference GROUP BY dst LIMIT ?", (limit,))
 
+    def find_type_by_name(self, typename):  # TODO: what should the Console interface to this look like?
+        """given a typename with % wildcards, find matches"""
+        return self.sql_list("SELECT object FROM pytype WHERE name LIKE ?", (typename,))
+
+    def random_instances(self, obj_id, limit=20):
+        """given a type object id, return some random instances"""
+        return self.sql_list("SELECT id FROM object WHERE pytype = ? ORDER BY random() LIMIT ?", (obj_id, limit))
+
 
 class Console(Cmd):
     prompt = 'objex> '
