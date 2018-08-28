@@ -3,11 +3,7 @@ from __future__ import print_function
 
 import os
 from cmd import Cmd
-
-try:
-    import resource
-except ImportError:  # windows
-    resource = None
+import pprint
 import random
 import shutil
 import sqlite3
@@ -344,6 +340,25 @@ class Console(Cmd):
         if cmd == 'exit' and not orig_line.strip() == 'exit':
             print('type "exit" to quit the console')
             return
+
+        if os.getenv('OBJEX_DEBUG', '') and cmd not in self.completenames(''):
+            command, arg, line = Cmd.parseline(self, line)
+            reader_func = getattr(self.reader, command, None)
+            if reader_func:
+                args = []
+                for a in arg.split():
+                    try:
+                        args.append(int(a))
+                    except ValueError:
+                        args.append(a)
+                try:
+                    res = reader_func(*args)
+                    pprint.pprint(res)
+                except Exception:
+                    import traceback; traceback.print_exc()
+                print()
+                return
+
         if line and line != 'EOF' and cmd and self.completenames(cmd):
             self.cmd_history.append({'line': line, 'cmd': cmd, 'args': args, 'options': []})
         try:
@@ -363,6 +378,7 @@ class Console(Cmd):
                     if command and c.startswith(command)]
         if commands:
             command = commands[0]
+
         return command, arg, line
 
     def postcmd(self, stop, line):
