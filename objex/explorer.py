@@ -467,6 +467,11 @@ class Console(Cmd):
             return "[" + self._obj_label(int(ref[1:])) + "]"
         return ref
 
+    def _ref_path(self, ref_path):
+        '''format a ref_path as returned by Reader.find_path() for display'''
+        base_obj = self._obj_label(ref_path[0][0])
+        return base_obj + ''.join([self._ref(ref) for obj_id, ref in ref_path])
+
     def _info_str(self, obj_id):
         if self.reader.obj_is_type(obj_id):
             return "{label} (instances={num_instances:,})".format(
@@ -524,9 +529,7 @@ class Console(Cmd):
                 print('%s modules transitively refer to %s:'
                       % (len(module_ref_paths), label))
                 for ref_path in module_ref_paths:
-                    base_obj = self._obj_label(ref_path[0][0])
-                    cur_text = base_obj + ''.join([self._ref(ref) for obj_id, ref in ref_path])
-                    self._print_option('go %s' % ref_path[0][0], cur_text)
+                    self._print_option('go %s' % ref_path[0][0], self._ref_path(ref_path))
 
         if not self.reader.obj_is_frame(self.cur):
             print()
@@ -535,9 +538,7 @@ class Console(Cmd):
                 print('%s frames transitively refer to %s:'
                       % (len(frame_ref_paths), label))
                 for ref_path in frame_ref_paths:
-                    base_obj = self._obj_label(ref_path[0][0])
-                    cur_text = base_obj + ''.join([self._ref(ref) for obj_id, ref in ref_path])
-                    self._print_option('go %s' % ref_path[0][0], cur_text)
+                    self._print_option('go %s' % ref_path[0][0], self._ref_path(ref_path))
 
         print()
         return
