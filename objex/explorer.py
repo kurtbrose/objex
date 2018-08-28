@@ -110,6 +110,9 @@ class Reader(object):
     def obj_size(self, obj_id):
         return self.sql_val('SELECT size FROM object WHERE id = ?', (obj_id,))
 
+    def obj_refcount(self, obj_id):
+        return self.sql_val('SELECT refcount FROM object WHERE id = ?', (obj_id,))
+
     def obj_len(self, obj_id):
         return self.sql_val('SELECT len FROM object WHERE id = ?', (obj_id,))
 
@@ -452,12 +455,14 @@ class Console(Cmd):
             )
         obj_len = self.reader.obj_len(obj_id)
         if obj_len is None:
-            return '{label} (size={size})'.format(
+            return '{label} (size={size}, refcount={refcount})'.format(
                 label=self._obj_label(obj_id),
+                refcount=self.reader.obj_refcount(obj_id),
                 size=self.reader.obj_size(obj_id))
 
-        return '{label} (size={size}, len={len})'.format(
+        return '{label} (size={size}, recount={refcount}, len={len})'.format(
             label=self._obj_label(obj_id),
+            refcount=self.reader.obj_refcount(obj_id),
             size=self.reader.obj_size(obj_id),
             len=obj_len)
 
@@ -530,7 +535,8 @@ class Console(Cmd):
             fmt_path = []
             for obj_id, ref in path:
                 fmt_path.append(self._obj_label(obj_id) + self._ref(ref))
-            fmt_paths.append(''.join(fmt_path))
+            full_path = ''.join(fmt_path) or '__builtin__'
+            fmt_paths.append(full_path)
         return fmt_paths
 
     def do_list(self, args=None):

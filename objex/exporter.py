@@ -109,8 +109,8 @@ class _Writer(object):
         except Exception:
             length = None
         self.execute(
-            "INSERT INTO object (id, pytype, size, len) VALUES (?, ?, ?, ?)",
-            (obj_id, type_obj_id, sys.getsizeof(obj), length))
+            "INSERT INTO object (id, pytype, size, len, refcount) VALUES (?, ?, ?, ?, ?)",
+            (obj_id, type_obj_id, sys.getsizeof(obj), length, sys.getrefcount(obj) - 1))
         # all of these are pretty rare (maybe optimize?)
         if id(obj) not in self.type_id_map and (is_type or isinstance(obj, type)):
             obj_type_id = self.type_id_map[id(obj)] = len(self.type_id_map)

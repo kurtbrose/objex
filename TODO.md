@@ -25,7 +25,7 @@ first chars in the list below: 'bdfghilmopstuw'  (keep updated)
 * where - if a frame, includes stack, if a type, includes mro, always gives some idea of orientation (traversal path history)
 * history
 * path
-* top - high-level statistics (most references, most central, etc.)
+* ranks - high-level statistics (most references, most central, etc.)
 * search?
 * python/sql?
 

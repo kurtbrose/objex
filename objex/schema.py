@@ -14,7 +14,8 @@ CREATE TABLE object (
     id INTEGER PRIMARY KEY,
     pytype INTEGER NOT NULL,
     size INTEGER NOT NULL,
-    len INTEGER
+    len INTEGER,
+    refcount INTEGER
 );
 
 CREATE TABLE pytype (
