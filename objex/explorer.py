@@ -23,6 +23,23 @@ except ImportError:
 from .schema import _INDICES
 from .dbutils import _run_ddl
 
+
+def _add_class_references(conn):
+    '''
+    ensure there is a __class__ pointing from instance to class
+    '''
+    conn.execute("""
+        INSERT INTO reference (src, dst, ref)
+        SELECT id, pytype, '__class__' FROM object
+        WHERE NOT EXISTS (
+            SELECT 1 FROM REFERENCE WHERE
+            src = object.id AND
+            dst = object.pytype AND
+            ref = '__class__'
+        )
+    """)
+
+
 def make_analysis_db(collection_db_path, analysis_db_path):
     '''
     make an analysis SQLite DB from a collection SQLite DB
@@ -38,6 +55,7 @@ def make_analysis_db(collection_db_path, analysis_db_path):
     shutil.copyfile(collection_db_path, analysis_db_path)
     conn = sqlite3.connect(analysis_db_path)
     _run_ddl(conn, _INDICES)
+    _add_class_references(conn)
 
 
 class Reader(object):
