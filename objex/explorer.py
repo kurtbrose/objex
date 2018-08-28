@@ -7,7 +7,6 @@ import pprint
 import random
 import shutil
 import sqlite3
-
 try:
     import colorama
 except ImportError:
@@ -618,3 +617,39 @@ class Console(Cmd):
         print()
         self.do_list()
         return self.cmdloop()
+
+
+def mro(t, get_bases=None):
+    """Compute the class precedence list (mro) according to C3
+
+    lightly modified from https://www.python.org/download/releases/2.3/mro/
+    """
+    if get_bases is None:
+        get_bases = lambda t: t.__bases__
+
+    start = [[t]] + [mro(bt) for bt in t.__bases__] + [list(t.__bases__)]
+
+    def _merge_mro(seqs):
+        i=0
+        res = []
+        while 1:
+            nonemptyseqs = [seq for seq in seqs if seq]
+            if not nonemptyseqs:
+                 return res
+            i += 1
+            for seq in nonemptyseqs:  # find merge candidates among seq heads
+                cand = seq[0]
+                nothead=[s for s in nonemptyseqs if cand in s[1:]]
+                if nothead:
+                    cand = None  # reject candidate
+                else:
+                    break
+            if not cand:
+                raise ValueError("Inconsistent hierarchy")
+            res.append(cand)
+            for seq in nonemptyseqs: # remove cand
+                if seq[0] == cand:
+                    del seq[0]
+        raise ValueError('could not produce valid mro merge')
+
+    return _merge_mro(start)
