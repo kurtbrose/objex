@@ -89,11 +89,15 @@ class Reader(object):
         return self.sql_val(
             'SELECT 1.0 * sum(size) / 1024 / 1024 / (SELECT memory_mb from meta) FROM object, meta')
 
-    def cost_by_type(self):
+    def cost_by_type(self, limit=20):
         '''get (typename, percent memory, number of instances) ordered by percent memory'''
         return self.sql(
-            'SELECT name, count(*), 100 * sum(size) / (1.0 * (SELECT sum(size) FROM object))'
-            'FROM object JOIN pytype ON object.pytype = pytype.id GROUP BY name ORDER BY sum(size) DESC')
+            """
+            SELECT name, count(*), 100 * sum(size) / (1.0 * (SELECT sum(size) FROM object))
+            FROM object JOIN pytype ON object.pytype = pytype.object
+            GROUP BY name ORDER BY sum(size) DESC LIMIT ?
+            """,
+            (limit,))
 
     def as_digraph(self):
         '''return an obj-id -> obj-id networkx DiGraph'''
@@ -715,7 +719,7 @@ class Console(Cmd):
             return
         print("top {} objects by {}:".format(num, name))
         for val, obj_id in result:
-            print(val, self._obj_label(obj_id))
+            print("{:,}".format(val), self._obj_label(obj_id))
         print()
 
     def run(self):
