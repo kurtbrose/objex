@@ -58,6 +58,9 @@ def make_analysis_db(collection_db_path, analysis_db_path):
     _add_class_references(conn)
 
 
+_MISSING = object()
+
+
 class Reader(object):
     '''read a graph dumped previously'''
     def __init__(self, path):
@@ -70,9 +73,15 @@ class Reader(object):
             return self.conn.execute(sql).fetchall()
         return self.conn.execute(sql, args).fetchall()
 
-    def sql_val(self, sql, args=None):
+    def sql_val(self, sql, args=None, default=_MISSING):
         '''run SELECT sql that returns single value'''
-        return self.sql(sql, args)[0][0]
+        result = self.sql(sql, args)
+        if not result:
+            if default is not _MISSING:
+                return default
+            # TODO: better exception type
+            raise ValueError("sql returned no rows", sql)
+        return result[0][0]
 
     def sql_list(self, sql, args=None):
         '''run SELECT and return [a, b, c] instead of [(a,), (b,), (c,)]'''
@@ -178,7 +187,7 @@ class Reader(object):
         return self.sql_list('SELECT obj_id FROM pytype_bases WHERE base_obj_id = ?', (obj_id,))
 
     def modulename(self, obj_id):
-        return self.sql_val('SELECT name FROM module WHERE object = ?', (obj_id,))
+        return self.sql_val('SELECT name FROM module WHERE object = ?', (obj_id,), default=None)
 
     def funcname(self, obj_id):
         return self.sql_val('SELECT func_name FROM function WHERE object = ?', (obj_id,))
