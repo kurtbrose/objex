@@ -739,7 +739,7 @@ class Console(Cmd):
             return
         print("top {} objects by {}:".format(num, name))
         for val, obj_id in result:
-            print("{:,}".format(val), self._obj_label(obj_id))
+            self._print_option('go %s' % obj_id, " {} ({:,})".format(self._obj_label(obj_id), val))
         print()
 
     def run(self):
