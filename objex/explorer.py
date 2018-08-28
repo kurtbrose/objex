@@ -358,14 +358,15 @@ class Reader(object):
     def get_orphan_count(self):
         return self.sql_val('SELECT count(*) FROM object WHERE id NOT IN (SELECT dst FROM reference)')
 
-    def get_orphan_type_count(self):
-        return dict(self.sql(
+    def get_orphan_type_count(self, limit=20):
+        return self.sql(
             """
             SELECT name, count(object.id) FROM object JOIN pytype ON object.pytype = pytype.object
             WHERE object.id NOT IN (SELECT dst FROM reference)
                   AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT))
-            GROUP BY name
-            """))
+            GROUP BY name ORDER BY count(object.id) DESC LIMIT ?
+            """,
+            (limit,))
 
     def most_common_types(self, limit=20):
         """return the most common types, in the form [(number, type-obj-id), ...]"""
