@@ -124,6 +124,11 @@ class _Writer(object):
             self.execute(
                 "INSERT INTO pytype (id, object, module, name) VALUES (?, ?, ?, ?)",
                 (obj_type_id, obj_id, module_obj_id, obj.__name__))
+            bases = getattr(obj, '__bases__', [])
+            for base in bases:
+                base_obj_id = self._ensure_db_id(base, is_type=True)
+                self.execute("INSERT INTO pytype_bases (obj_id, base_obj_id) VALUES (?, ?)",
+                             (obj_id, base_obj_id))
         elif type(obj) in self.tracked_t_id_map:
             # ^ expected to be False > 99% of time
             self._handle_tracked_type(obj, obj_id)

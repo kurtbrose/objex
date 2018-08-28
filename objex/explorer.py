@@ -107,6 +107,18 @@ class Reader(object):
                 'SELECT pytype FROM object WHERE id = ?)',
             (obj_id,))
 
+    def obj_typequalname(self, obj_id):
+        '''given an object id, return typename'''
+        mod_obj_id, name = self.sql('SELECT module, name FROM pytype'
+                                    ' WHERE object = (SELECT pytype FROM object WHERE id = ?)',
+                                    (obj_id,))[0]
+        mod_name = self.modulename(mod_obj_id)
+        if not mod_name:
+            mod_name = '(unknown_module#%s)' % mod_obj_id
+        elif mod_name == '__builtin__':
+            return name
+        return '%s.%s' % (mod_name, name)
+
     def obj_size(self, obj_id):
         return self.sql_val('SELECT size FROM object WHERE id = ?', (obj_id,))
 
@@ -145,6 +157,21 @@ class Reader(object):
     def typename(self, obj_id):
         '''name of an object that IS a type'''
         return self.sql_val('SELECT name FROM pytype WHERE object = ?', (obj_id,))
+
+    def typequalname(self, obj_id):
+        mod_obj_id, name = self.sql('SELECT module, name FROM pytype WHERE object = ?', (obj_id,))[0]
+        mod_name = self.modulename(mod_obj_id)
+        if not mod_name:
+            mod_name = '(unknown_module#%s)' % mod_obj_id
+        elif mod_name == '__builtin__':
+            return name
+        return '%s.%s' % (mod_name, name)
+
+    def basetypes(self, obj_id):
+        return self.sql_list('SELECT base_obj_id FROM pytype_bases WHERE obj_id = ?', (obj_id,))
+
+    def subtypes(self, obj_id):
+        return self.sql_list('SELECT obj_id FROM pytype_bases WHERE base_obj_id = ?', (obj_id,))
 
     def modulename(self, obj_id):
         return self.sql_val('SELECT name FROM module WHERE object = ?', (obj_id,))
@@ -464,7 +491,7 @@ class Console(Cmd):
     def _obj_label(self, obj_id):
         if self.reader.obj_is_type(obj_id):
             return colored("<type {}#{}>".format(
-                self.reader.typename(obj_id), obj_id), 'green')
+                self.reader.typequalname(obj_id), obj_id), 'green')
         if self.reader.obj_is_module(obj_id):
             return "<module {}#{}>".format(
                 self.reader.modulename(obj_id), obj_id)
@@ -475,7 +502,7 @@ class Console(Cmd):
             return "<frame({})#{}>".format(
                 self.reader.frame_codename(obj_id), obj_id)
         return colored("<{}#{}>".format(
-            self.reader.obj_typename(obj_id), obj_id), 'red')
+            self.reader.obj_typequalname(obj_id), obj_id), 'red')
 
     def _ref(self, ref):
         '''translate ref for display'''
@@ -534,11 +561,29 @@ class Console(Cmd):
 
         print()
         if self.reader.obj_is_type(self.cur):
+            type_obj_bases = self.reader.basetypes(self.cur)
+            print('{} base types of {}:'.format(len(type_obj_bases), label))
+            for base_obj_id in type_obj_bases:
+                self._print_option('go %s' % base_obj_id, ' {}'.format(self._info_str(base_obj_id)))
+            print()
+
             print('{:,} instances of {}:'.format(self.reader.obj_instance_count(self.cur),
                                                  label))
-
             for inst in self.reader.obj_instances(self.cur):
                 self._print_option('go %s' % inst, ' {}'.format(self._info_str(inst)))
+            print()
+
+            type_obj_subs = self.reader.subtypes(self.cur)
+            print('{} subtypes of {}:'.format(len(type_obj_subs), label))
+            for sub_obj_id in type_obj_subs:
+                self._print_option('go %s' % sub_obj_id, ' {}'.format(self._info_str(sub_obj_id)))
+            print()
+
+            print('{:,} instances of {}:'.format(self.reader.obj_instance_count(self.cur),
+                                                 label))
+            for inst in self.reader.obj_instances(self.cur):
+                self._print_option('go %s' % inst, ' {}'.format(self._info_str(inst)))
+
 
         if not self.reader.obj_is_module(self.cur):
             print()

@@ -31,10 +31,10 @@ CREATE TABLE pytype (
     name TEXT NOT NULL -- typenames are okay
 );
 
-CREATE TABLE pytype_inherits (
+CREATE TABLE pytype_bases (
     id INTEGER PRIMARY KEY,
-    parent INTEGER NOT NULL, -- pytype
-    child INTEGER NOT NULL -- pytype
+    obj_id INTEGER NOT NULL, -- object id
+    base_obj_id INTEGER NOT NULL -- object id
 );
 
 CREATE TABLE module (
