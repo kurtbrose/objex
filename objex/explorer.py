@@ -580,6 +580,17 @@ class Console(Cmd):
                 self._print_option('go %s' % base_obj_id, ' {}'.format(self._info_str(base_obj_id)))
             print()
 
+            try:
+                type_mro = mro(self.cur, get_bases=self.reader.basetypes)
+            except ValueError:
+                type_mro = []
+            other_type_mro = type_mro[len(type_obj_bases) + 1:]
+            if other_type_mro:
+                print('{} other types in MRO:'.format(len(other_type_mro)))
+                for bt in other_type_mro:
+                    self._print_option('go %s' % bt, ' {}'.format(self._info_str(bt)))
+                print()
+
             type_obj_subs = self.reader.subtypes(self.cur)
             print('{} subtypes of {}:'.format(len(type_obj_subs), label))
             for sub_obj_id in type_obj_subs:
@@ -758,7 +769,7 @@ def mro(t, get_bases=None):
     if get_bases is None:
         get_bases = lambda t: t.__bases__
 
-    start = [[t]] + [mro(bt) for bt in t.__bases__] + [list(t.__bases__)]
+    start = [[t]] + [mro(bt, get_bases=get_bases) for bt in get_bases(t)] + [list(get_bases(t))]
 
     def _merge_mro(seqs):
         i=0
