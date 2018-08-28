@@ -524,8 +524,8 @@ class Console(Cmd):
                 print('%s modules transitively refer to %s:'
                       % (len(module_ref_paths), label))
                 for ref_path in module_ref_paths:
-                    cur_text = ''.join([self._obj_label(obj_id) + self._ref(ref)
-                                        for obj_id, ref in ref_path])
+                    base_obj = self._obj_label(ref_path[0][0])
+                    cur_text = base_obj + ''.join([self._ref(ref) for obj_id, ref in ref_path])
                     self._print_option('go %s' % ref_path[0][0], cur_text)
 
         if not self.reader.obj_is_frame(self.cur):
@@ -535,8 +535,8 @@ class Console(Cmd):
                 print('%s frames transitively refer to %s:'
                       % (len(frame_ref_paths), label))
                 for ref_path in frame_ref_paths:
-                    cur_text = ''.join([self._obj_label(obj_id) + self._ref(ref)
-                                        for obj_id, ref in ref_path])
+                    base_obj = self._obj_label(ref_path[0][0])
+                    cur_text = base_obj + ''.join([self._ref(ref) for obj_id, ref in ref_path])
                     self._print_option('go %s' % ref_path[0][0], cur_text)
 
         print()
