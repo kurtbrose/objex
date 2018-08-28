@@ -164,7 +164,7 @@ class Reader(object):
         return self.sql_list(
             'SELECT id FROM object WHERE object.pytype = ? LIMIT ?', (obj_id, limit))
 
-    def obj_instance_count(self, type_obj_id):
+    def obj_instance_count(self, obj_id):
         """return the number of instances of a type object"""
         return self.sql_val('SELECT count(*) FROM object WHERE object.pytype = ?', (obj_id,))
 
