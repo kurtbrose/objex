@@ -330,6 +330,20 @@ class Reader(object):
             GROUP BY name
             """))
 
+    def most_common_types(self, limit=20):
+        """return the most common types, in the form [(number, type-obj-id), ...]"""
+        return self.sql(
+            "SELECT count(*), object.pytype FROM object GROUP BY object.pytype ORDER BY count(*) DESC LIMIT ?",
+            (limit,))
+
+    def largest_objects(self, limit=20):
+        """get the largest objects (by sizeof)"""
+        return self.sql("SELECT size, id FROM object ORDER BY size DESC LIMIT ?", (limit,))
+
+    def most_referenced_objects(self, limit=20):
+        """get the most referenced objects (by entries in reference table)"""
+        return self.sql("SELECT count(*), dst FROM reference GROUP BY dst LIMIT ?", (limit,))
+
 
 class Console(Cmd):
     prompt = 'objex> '
@@ -645,6 +659,27 @@ class Console(Cmd):
         print("path from", self._obj_label(from_))
         for ref_path in ref_paths:
             print(self._ref_path(ref_path))
+        print()
+
+    def do_top(self, args):
+        if len(args) == 2:
+            num = int(args[0])
+        else:
+            num = 20
+        name = args[-1]
+        if name == 'types':
+            result = self.reader.most_common_types(num)
+            name = 'type'
+        elif name == 'size':
+            result = self.reader.largest_objects(num)
+        elif name == 'referenced':
+            result = self.reader.most_referenced_objects(num)
+        else:
+            print("unrecognized option:", name)
+            return
+        print("top {} objects by {}:".format(num, name))
+        for val, obj_id in result:
+            print(val, self._obj_label(obj_id))
         print()
 
     def run(self):
