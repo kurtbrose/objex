@@ -1,4 +1,10 @@
+"""
+Implements a star-schema on object.
 
+All foreign keys are object ids.
+pycode, pytype, pyframe, module, etc associate with an object row
+via their "object" column
+"""
 _SCHEMA = '''
 CREATE TABLE meta (
     id INTEGER PRIMARY KEY,
