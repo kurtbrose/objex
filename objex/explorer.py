@@ -152,6 +152,13 @@ class Reader(object):
     def funcname(self, obj_id):
         return self.sql_val('SELECT func_name FROM function WHERE object = ?', (obj_id,))
 
+    def frame_codename(self, obj_id):
+        """get the code name associated with this frame's pycode"""
+        return self.sql_val(
+            'SELECT co_name FROM pycode WHERE object = ('
+                'SELECT f_code_obj_id FROM pyframe WHERE object = ?)',
+            (obj_id,))
+
     def obj_instances(self, obj_id, limit=20):
         return self.sql_list(
             'SELECT id FROM object WHERE object.pytype = ('
@@ -446,6 +453,9 @@ class Console(Cmd):
         if self.reader.obj_is_func(obj_id):
             return "<function {}#{}>".format(
                 self.reader.funcname(obj_id), obj_id)
+        if self.reader.obj_is_frame(obj_id):
+            return "<frame({})#{}>".format(
+                self.reader.frame_codename(obj_id), obj_id)
         return colored("<{}#{}>".format(
             self.reader.obj_typename(obj_id), obj_id), 'red')
 
