@@ -567,12 +567,6 @@ class Console(Cmd):
                 self._print_option('go %s' % base_obj_id, ' {}'.format(self._info_str(base_obj_id)))
             print()
 
-            print('{:,} instances of {}:'.format(self.reader.obj_instance_count(self.cur),
-                                                 label))
-            for inst in self.reader.obj_instances(self.cur):
-                self._print_option('go %s' % inst, ' {}'.format(self._info_str(inst)))
-            print()
-
             type_obj_subs = self.reader.subtypes(self.cur)
             print('{} subtypes of {}:'.format(len(type_obj_subs), label))
             for sub_obj_id in type_obj_subs:
