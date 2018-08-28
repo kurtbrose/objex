@@ -463,7 +463,7 @@ class Console(Cmd):
                 refcount=self.reader.obj_refcount(obj_id),
                 size=self.reader.obj_size(obj_id))
 
-        return '{label} (size={size}, recount={refcount}, len={len})'.format(
+        return '{label} (size={size}, refcount={refcount}, len={len})'.format(
             label=self._obj_label(obj_id),
             refcount=self.reader.obj_refcount(obj_id),
             size=self.reader.obj_size(obj_id),
