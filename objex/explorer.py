@@ -220,10 +220,10 @@ class Reader(object):
         dst_depth = src_depth = 0
         while not src_fringe & dst_fringe:
             if dst_depth + src_depth > limit:
-                print("depth", dst_depth, src_depth)
+                # print("depth", dst_depth, src_depth)
                 return []  # depth limit exceeded
             if not dst_fringe or not src_fringe:
-                print("deadend", not(dst_fringe), dst_depth, not(src_fringe), src_depth, list(dst_child)[:10])
+                # print("deadend", not(dst_fringe), dst_depth, not(src_fringe), src_depth, list(dst_child)[:10])
                 return []  # dead end without match
             if len(dst_fringe) < len(src_fringe):
                 dst_depth += 1
@@ -473,7 +473,7 @@ class Console(Cmd):
         cur_options = self.cmd_history[-1]['options']
 
         cur_options.append(shortcut)
-        res = '%s - %s' % (str(len(cur_options)).rjust(2), option)
+        res = ' %s - %s' % (str(len(cur_options)).rjust(2), option)
         print(res)
         return res
 
@@ -498,6 +498,28 @@ class Console(Cmd):
 
             for inst in self.reader.obj_instances(self.cur):
                 self._print_option('go %s' % inst, ' {}'.format(self._info_str(inst)))
+
+        if not self.reader.obj_is_module(self.cur):
+            print()
+            module_ref_paths = self.reader.find_path_to_module(self.cur)
+            if module_ref_paths:
+                print('%s modules transitively refer to %s:'
+                      % (len(module_ref_paths), label))
+                for ref_path in module_ref_paths:
+                    cur_text = ''.join([self._obj_label(obj_id) + self._ref(ref)
+                                        for obj_id, ref in ref_path])
+                    self._print_option('go %s' % ref_path[0][0], cur_text)
+
+        if not self.reader.obj_is_frame(self.cur):
+            print()
+            frame_ref_paths = self.reader.find_path_to_frame(self.cur)
+            if frame_ref_paths:
+                print('%s frames transitively refer to %s:'
+                      % (len(frame_ref_paths), label))
+                for ref_path in frame_ref_paths:
+                    cur_text = ''.join([self._obj_label(obj_id) + self._ref(ref)
+                                        for obj_id, ref in ref_path])
+                    self._print_option('go %s' % ref_path[0][0], cur_text)
 
         print()
         return
@@ -531,26 +553,6 @@ class Console(Cmd):
             ret = None
         return ret
 
-    def _global_ref_chains(self):
-        '''fetch the global reference paths to current object'''
-        fmt_paths = []
-        for path in self.reader.find_path_to_module(self.cur):
-            fmt_path = []
-            for obj_id, ref in path:
-                fmt_path.append(self._obj_label(obj_id) + self._ref(ref))
-            fmt_paths.append(''.join(fmt_path))
-        return fmt_paths
-
-    def _local_ref_chains(self):
-        '''fetch the local reference paths to current object'''
-        fmt_paths = []
-        for path in self.reader.find_path_to_frame(self.cur):
-            fmt_path = []
-            for obj_id, ref in path:
-                fmt_path.append(self._obj_label(obj_id) + self._ref(ref))
-            fmt_paths.append(''.join(fmt_path))
-        return fmt_paths
-
     def do_list(self, args=None):
         if not args:
             target = self.cur
@@ -569,18 +571,6 @@ class Console(Cmd):
         except IndexError:
             print('no object with id: %r' % target)
             return
-
-        if not self.reader.obj_is_module(target):
-            global_refs = self._global_ref_chains()
-            if global_refs:
-                print('  %s global references found: %s'
-                      % (len(global_refs), ', '.join(global_refs)))
-
-        if not self.reader.obj_is_frame(target):
-            local_refs = self._local_ref_chains()
-            if local_refs:
-                print('  %s local references found: %s'
-                      % (len(local_refs), ', '.join(local_refs)))
 
         return
 
