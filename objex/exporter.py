@@ -60,7 +60,7 @@ class _Writer(object):
         self.started = time.time()
         # ignore ids not just to avoid analysis noise, but because these can
         # get pretty big over time, don't want to waste DB space
-        self.ignore_ids = {id(e) for e in self.__dict__.values()}
+        self.ignore_ids = {id(e) for e in self.__dict__.values() + self.tracked_t_id_map.values()}
         self.ignore_ids.add(id(self.ignore_ids))
         self.ignore_ids.add(id(self.__dict__))
         # commented out tracing code
@@ -220,11 +220,18 @@ class _Writer(object):
                 key_dst.append(('.__dict__', obj.__dict__))
             if hasattr(obj, "__module__"):
                 key_dst.append(('__module__', obj.__module__))
-            try:
-                slots = obj.__class__.__slots__
-            except AttributeError:
-                slots = ()
-            for key in slots:
+            if id(type(obj)) not in self.type_slots_map:
+                slot_names = set()
+                try:
+                    mro = type(obj).mro()
+                except TypeError:
+                    pass
+                else:
+                    for type_ in mro:
+                        slot_names.update(getattr(type_, '__slots__', ()))
+                self.type_slots_map[id(type(obj))] = slot_names or ()
+                # () is a singleton which creates less object noise than set()
+            for key in self.type_slots_map[id(type(obj))]:
                 if key in ('__dict__', '__weakref__'):
                     # see https://docs.python.org/3/reference/datamodel.html#slots
                     continue

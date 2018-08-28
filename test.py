@@ -50,6 +50,24 @@ def garbage_module(): pass
 
 garbage_module.__module__ = 3.141
 
+
+# do some tricky __slots__ + inheritance stuff
+
+class A(object):
+  __slots__ = ('a',)
+
+
+class B(A):
+  __slots__ = ('b',)
+
+
+class C(B):
+  pass
+
+c = C()
+
+c.c = 'lmao'
+
 # now that a bunch of balls are in the air, dump them to disk
 if os.path.exists('objex-test.db'):
     os.remove('objex-test.db')
