@@ -1,6 +1,7 @@
 
 from __future__ import print_function
 
+import ast
 import os
 from cmd import Cmd
 import pprint
@@ -370,16 +371,24 @@ class Console(Cmd):
             reader_func = getattr(self.reader, command, None)
             if reader_func:
                 args = []
-                for a in arg.split():
+                mark = 0
+                chunks = arg.split()
+                for i in range(len(chunks) + 1):
+                    attempt = " ".join(chunks[mark:i]).strip()
+                    try:  # ast.literal_eval takes 4 microseconds; no perf issue
+                        args.append(ast.literal_eval(attempt))
+                        mark = i
+                    except SyntaxError:
+                        pass
+                if mark < len(chunks):
+                    print("ERROR unparsed input: ", " ".join(chunks[mark:]))
+                else:
                     try:
-                        args.append(int(a))
-                    except ValueError:
-                        args.append(a)
-                try:
-                    res = reader_func(*args)
-                    pprint.pprint(res)
-                except Exception:
-                    import traceback; traceback.print_exc()
+                        res = reader_func(*args)
+                        pprint.pprint(res)
+                    except Exception:
+                        import traceback; traceback.print_exc()
+                        print("args:", args)
                 print()
                 return
 
