@@ -303,6 +303,13 @@ class Reader(object):
         '''
         return self._find_obj_ref_paths_from_any(self.sql_list('SELECT object FROM pyframe'), obj_id)
 
+    def find_path(self, src_obj_id, dst_obj_id):
+        '''
+        similar to find_path_to_module and find_path_to_frame
+        try to find a path between src and dst
+        '''
+        return self._find_obj_ref_paths_from_any([src_obj_id], dst_obj_id)
+
     def get_orphan_ids(self):
         '''
         return a list of the object ids that are not dst of any references
@@ -551,8 +558,8 @@ class Console(Cmd):
             return res  # TODO (go to a specific one)
 
         label = self._obj_label(self.cur)
-        print("{:,} references to {}:".format(self.reader.obj_refers_to_count(self.cur),
-                                              label))
+        print("{} refers to {:,} objects:".format(
+            label, self.reader.obj_refers_to_count(self.cur)))
 
         for ref, dst in out_ref:
             option_text = ' {}: {}'.format(ref, self._info_str(dst))
@@ -619,6 +626,26 @@ class Console(Cmd):
             return
         self.history_idx += 1
         self.do_list()
+
+    def do_path_to(self, args):
+        towards = self._to_id(args[0])
+        ref_paths = self.reader.find_path(self.cur, towards)
+        if not ref_paths:
+            print("no path found to", self._obj_label(towards))
+        print("path to", self._obj_label(towards))
+        for ref_path in ref_paths:
+            print(self._ref_path(ref_path))
+        print()
+
+    def do_path_from(self, args):
+        from_ = self._to_id(args[0])
+        ref_paths = self.reader.find_path(from_, self.cur)
+        if not ref_paths:
+            print("no path found from", self._obj_label(from_))
+        print("path from", self._obj_label(from_))
+        for ref_path in ref_paths:
+            print(self._ref_path(ref_path))
+        print()
 
     def run(self):
         print("WELCOME TO OBJEX EXPLORER")
