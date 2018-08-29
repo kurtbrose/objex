@@ -254,7 +254,10 @@ class _Writer(object):
                     pass
                 else:
                     for type_ in mro:
-                        slot_names.update(getattr(type_, '__slots__', ()))
+                        try:  # object.__getattribute__ to avoid any custom __getattr__ etc
+                            slot_names.update(object.__getattribute__(type_, '__slots__'))
+                        except AttributeError:
+                            pass
                 self.type_slots_map[id(type(obj))] = slot_names or ()
                 # () is a singleton which creates less object noise than set()
             for key in self.type_slots_map[id(type(obj))]:
@@ -264,7 +267,7 @@ class _Writer(object):
                 if key.startswith('__'):  # private slots name mangling
                     key = "_" + obj.__class__.__name__ + key
                 try:
-                    key_dst.append(('.' + key, getattr(obj, key)))
+                    key_dst.append(('.' + key, object.__getattribute__(obj, key)))
                 except AttributeError:
                     pass  # just because a slot exists doesn't mean it has a value
         if mode == 'frame':  # expensive to handle, but pretty rare

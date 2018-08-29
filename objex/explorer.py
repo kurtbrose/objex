@@ -347,13 +347,16 @@ class Reader(object):
         '''
         return self._find_obj_ref_paths_from_any([src_obj_id], dst_obj_id)
 
-    def get_orphan_ids(self):
+    def get_orphan_ids(self, limit=20):
         '''
         return a list of the object ids that are not dst of any references
         '''
         return self.sql_list(
-            "SELECT id FROM object WHERE id NOT IN (SELECT dst FROM reference) AND NOT EXISTS ("
-            "SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT) )")
+            """
+            SELECT id FROM object WHERE id NOT IN (SELECT dst FROM reference) AND NOT EXISTS (
+                SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT) ) LIMIT ?
+            """,
+            (limit,))
 
     def get_orphan_count(self):
         return self.sql_val('SELECT count(*) FROM object WHERE id NOT IN (SELECT dst FROM reference)')
@@ -365,6 +368,14 @@ class Reader(object):
             WHERE object.id NOT IN (SELECT dst FROM reference)
                   AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT))
             GROUP BY name ORDER BY count(object.id) DESC LIMIT ?
+            """,
+            (limit,))
+
+    def random_orphans(self, limit=20):
+        return self.sql_list(
+            """
+            SELECT id FROM object WHERE id NOT IN (SELECT dst FROM reference) AND NOT EXISTS (
+                SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT) ) ORDER BY random() LIMIT ?
             """,
             (limit,))
 
@@ -389,6 +400,21 @@ class Reader(object):
     def random_instances(self, obj_id, limit=20):
         """given a type object id, return some random instances"""
         return self.sql_list("SELECT id FROM object WHERE pytype = ? ORDER BY random() LIMIT ?", (obj_id, limit))
+
+    def get_module_global(self, module_name, var_name):
+        '''
+        find the object which is referred to by a module named module_name with a variable named var_name
+        '''
+        module_id = self.sql_val('SELECT object FROM module WHERE name = ?', (module_name,), default=None)
+        if module_id is None:
+            raise ValueError("no module named {!r}".format(module_name))
+        self.sql_val("""
+            SELECT id FROM object WHERE EXISTS (
+                SELECT 1 FROM reference WHERE
+                    dst = object.id AND
+                    src = (SELECT object FROM module WHERE name = ?)
+            )
+            """)
 
 
 class Console(Cmd):
