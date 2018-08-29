@@ -47,11 +47,16 @@ def _dict_rel(obj, ref):
 class _Writer(object):
     '''
     responsible for dumping objects
+
+    use_gc -- flag whether to call gc.get_referrers and gc.get_referrents
+    on every object and record in addition to other information
+    (default False because this is ~20x slower)
     '''
     _TRACKED_TYPES = (types.ModuleType, types.FrameType, types.FunctionType, types.CodeType)
 
-    def __init__(self, conn):
+    def __init__(self, conn, use_gc=False):
         self.conn = conn
+        self.use_gc = use_gc
         # tracking objects by id gives two benefits:
         # 1- avoids calls to __eq__ which may execute arbitrary code
         # 2- avoids changing refcount on objects
@@ -72,7 +77,7 @@ class _Writer(object):
         # self.times = []
 
     @classmethod
-    def from_path(cls, path, use_wal=True):
+    def from_path(cls, path, use_gc=False, use_wal=True):
         '''create a new instance that will dump state to path (which shouldn't exist)'''
         conn = sqlite3.connect(path)
         if use_wal:
@@ -82,7 +87,7 @@ class _Writer(object):
         conn.execute(
             "INSERT INTO meta (id, pid, hostname, memory_mb, gc_info) VALUES (0, ?, ?, ?, ?)",
             (os.getpid(), getfqdn(), memory, '[{},{},{}]'.format(*gc.get_count())))
-        return cls(conn)
+        return cls(conn, use_gc=use_gc)
 
     def execute(self, sql, params):
         # start = time.time()
@@ -296,6 +301,15 @@ class _Writer(object):
         self.conn.executemany(
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
             [(db_id, self._ensure_db_id(dst, refs=2), key) for key, dst in key_dst])
+        if self.use_gc:
+            for referrer in gc.get_referrers(obj):
+                self.conn.execute(
+                    "INSERT INTO gc_referrer (src, dst) VALUES (?, ?)",
+                    (self._ensure_db_id(referrer, refs=1), db_id))
+            for referent in gc.get_referents(obj):
+                self.conn.execute(
+                    "INSERT INTO gc_referent (src, dst) VALUES (?, ?)",
+                    (db_id, self._ensure_db_id(referent, refs=1)))
         return db_id
 
     def add_frames(self):
@@ -326,7 +340,7 @@ class _Writer(object):
         self.conn.close()
 
 
-def dump_graph(path, print_info=False):
+def dump_graph(path, print_info=False, use_gc=False):
     '''
     dump a collection db to path;
     the collection db is designed to be small
@@ -335,7 +349,7 @@ def dump_graph(path, print_info=False):
     before analysis
     '''
     start = time.time()
-    grapher = _Writer.from_path(path)
+    grapher = _Writer.from_path(path, use_gc=use_gc)
     grapher.add_all()
     grapher.finish()
     if print_info:

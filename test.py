@@ -70,7 +70,7 @@ c.c = 'lmao'
 # now that a bunch of balls are in the air, dump them to disk
 if os.path.exists('objex-test.db'):
     os.remove('objex-test.db')
-dump_graph('objex-test.db', print_info=True)
+dump_graph('objex-test.db', print_info=True, use_gc=True)
 if os.path.exists('objex-test-analysis.db'):
     os.remove('objex-test-analysis.db')
 make_analysis_db('objex-test.db', 'objex-test-analysis.db')

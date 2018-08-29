@@ -79,6 +79,16 @@ CREATE TABLE reference (
     dst INTEGER NOT NULL, -- object
     ref TEXT NOT NULL -- keys *might* be okay
 );
+
+CREATE TABLE gc_referrer (
+    src INTEGER NOT NULL,
+    dst INTEGER NOT NULL
+);
+
+CREATE TABLE gc_referent (
+    src INTEGER NOT NULL,
+    dst INTEGER NOT NULL
+);
 '''
 
 
