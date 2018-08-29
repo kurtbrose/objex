@@ -404,17 +404,19 @@ class Reader(object):
     def get_module_global(self, module_name, var_name):
         '''
         find the object which is referred to by a module named module_name with a variable named var_name
+        e.g. got_module_global("sys", "modules") or get_module_global("gc", "garbage")
         '''
-        module_id = self.sql_val('SELECT object FROM module WHERE name = ?', (module_name,), default=None)
-        if module_id is None:
-            raise ValueError("no module named {!r}".format(module_name))
-        self.sql_val("""
+        return self.sql_val(
+            """
             SELECT id FROM object WHERE EXISTS (
                 SELECT 1 FROM reference WHERE
                     dst = object.id AND
-                    src = (SELECT object FROM module WHERE name = ?)
+                    src = (SELECT object FROM module WHERE name = ?) AND
+                    ref = '.' || ?
             )
-            """)
+            """,
+            (module_name, var_name)
+        )
 
 
 class Console(Cmd):
