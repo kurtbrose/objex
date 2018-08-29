@@ -1,3 +1,6 @@
+
+from __future__ import print_function
+
 import gc
 import inspect
 import os
@@ -11,6 +14,12 @@ from socket import getfqdn
 import sqlite3
 import time
 import types
+import itertools
+
+try:
+    from inspect import getfullargspec
+except ImportError:
+    from inspect import getargspec as getfullargspec
 
 from boltons.tbutils import Callpoint
 
@@ -63,7 +72,8 @@ class _Writer(object):
         self.started = time.time()
         # ignore ids not just to avoid analysis noise, but because these can
         # get pretty big over time, don't want to waste DB space
-        self.ignore_ids = {id(e) for e in self.__dict__.values() + self.tracked_t_id_map.values()}
+        self.ignore_ids = {id(e) for e in itertools.chain(self.__dict__.values(),
+                                                          self.tracked_t_id_map.values())}
         self.ignore_ids.add(id(self.ignore_ids))
         self.ignore_ids.add(id(self.__dict__))
         # commented out tracing code
@@ -176,8 +186,8 @@ class _Writer(object):
                 (
                     obj_t_id,
                     obj_id,
-                    obj.func_name,
-                    self._ensure_db_id(obj.func_code),
+                    getattr(obj, 'func_name', getattr(obj, '__name__', None)),
+                    self._ensure_db_id(getattr(obj, 'func_code', getattr(obj, '__code__', None))),
                     self._module_name2obj_id(obj.__module__)
                 )
             )
@@ -284,14 +294,17 @@ class _Writer(object):
             >>> b().func_closure[0].cell_contents
             2
             '''
-            if obj.func_closure:  # (maybe) grab function closure
-                for varname, cell in zip(obj.func_code.co_freevars, obj.func_closure):
+            closure = getattr(obj, 'func_closure', getattr(obj, '__closure__', None))
+            if closure:  # (maybe) grab function closure
+                func_code = getattr(obj, 'func_code', getattr(obj, '__code__', None))
+                for varname, cell in zip(func_code.co_freevars, closure):
                     key_dst.append((".locals[{!r}]".format(varname), cell.cell_contents))
-            args, varargs, keywords, defaults = inspect.getargspec(obj)
+            spec = getfullargspec(obj)
+            args, varargs, keywords, defaults = spec.args, spec.varargs, getattr(spec, 'keywords', getattr(spec, 'varkw', None)), spec.defaults
             if defaults:  # (maybe) grab function defaults
                 for name, default in zip(reversed(args), reversed(defaults)):
                     key_dst.append((".defaults[{!r}]".format(name), default))
-            key_dst.append(("func_code", obj.func_code))
+            key_dst.append(("func_code", getattr(obj, 'func_code', getattr(obj, '__code__', None))))
             key_dst.append(("__module__", obj.__module__))
         self.conn.executemany(
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
@@ -343,8 +356,8 @@ def dump_graph(path, print_info=False):
         memory = _get_memory_mb()
         dumpsize = os.stat(path).st_size / 1024.0 / 1024  # MiB
         objects = len(gc.get_objects())
-        print "process memory usage: {:0.3f}MiB".format(memory)
-        print "total objects:", objects
+        print("process memory usage: {:0.3f}MiB".format(memory))
+        print("total objects:", objects)
         # print "wrote {} rows in {}".format(
         #     len(grapher.times), duration)
         # print "db perf: {:0.3f}us/row".format(
@@ -352,9 +365,9 @@ def dump_graph(path, print_info=False):
         # print "overall perf: {:0.3f} s/GiB, {:0.03f} ms/object".format(
         #     1024 * duration / memory, 1000 * duration / objects)
         # print "duration - db time:", duration - sum(grapher.times)
-        print "duration: {0:0.1f}".format(time.time() - grapher.started)
-        print "compression - {:0.02f}MiB -> {:0.02f}MiB ({:0.01f}%)".format(
-            memory, dumpsize, 100 * (1 - dumpsize / memory))
+        print("duration: {0:0.1f}".format(time.time() - grapher.started))
+        print("compression - {:0.02f}MiB -> {:0.02f}MiB ({:0.01f}%)".format(
+            memory, dumpsize, 100 * (1 - dumpsize / memory)))
 
     return
 
