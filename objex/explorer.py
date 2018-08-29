@@ -397,7 +397,11 @@ class Reader(object):
             (limit,))
 
     def get_orphan_count(self):
-        return self.sql_val('SELECT count(*) FROM object WHERE id NOT IN (SELECT dst FROM reference)')
+        return self.sql_val(
+            """
+            SELECT count(*) FROM object WHERE id NOT IN (SELECT dst FROM reference)
+                AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT))
+            """)
 
     def get_orphan_type_count(self, limit=20):
         return self.sql(
