@@ -441,7 +441,10 @@ class Console(Cmd):
 
         if os.getenv('OBJEX_DEBUG', '') and cmd not in self.completenames(''):
             command, arg, line = Cmd.parseline(self, line)
-            reader_func = getattr(self.reader, command, None)
+            if command is None:  # empty line comes through as None not ''
+                reader_func = None
+            else:
+                reader_func = getattr(self.reader, command, None)
             if reader_func:
                 args = []
                 mark = 0
