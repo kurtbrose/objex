@@ -113,6 +113,13 @@ class Reader(object):
         from networkx import DiGraph
         return DiGraph(self.conn.execute('SELECT src, dst FROM reference').fetchall())
 
+    def obj_type(self, obj_id):
+        '''given an object id, return type object'''
+        return self.sql_val(
+            'SELECT object FROM pytype where object = ('
+                'SELECT pytype FROM object WHERE id = ?)',
+            (obj_id,))
+
     def obj_typename(self, obj_id):
         '''given an object id, return typename'''
         return self.sql_val(
@@ -219,6 +226,47 @@ class Reader(object):
         '''
         return dict(self.sql('SELECT name, object FROM module'))
 
+    def get_stack(self, frame_obj_id):
+        """Returns object ids of frame objects for a given stack, from oldest
+        to newest frame.
+        """
+        orig_frame_obj_id = frame_obj_id
+        ret = []
+
+        # first go backwards
+        while frame_obj_id:
+            frame_obj_id = self.sql_val(
+                'SELECT object FROM pyframe WHERE object = ('
+                'SELECT f_back_obj_id FROM pyframe WHERE object = ?)',
+                (frame_obj_id,), default=None)
+            if frame_obj_id:
+                ret.append(frame_obj_id)
+
+        ret.reverse()
+        frame_obj_id = orig_frame_obj_id
+        # then go forward, in case we're in the middle
+        while frame_obj_id:
+            ret.append(frame_obj_id)
+            frame_obj_id = self.sql_val(
+                'SELECT object FROM pyframe WHERE f_back_obj_id = ?',
+                (frame_obj_id,), default=None)
+
+        return ret
+
+    def get_formatted_stack(self, frame_obj_id):
+        lines = []
+        frame_obj_ids = self.get_stack(frame_obj_id)
+        for cur_obj_id in frame_obj_ids:
+            cur_trace = self.sql_val('SELECT trace FROM pyframe WHERE object = ?', (cur_obj_id,))
+            cur_trace = ('  (%s)' % cur_obj_id) + cur_trace
+            if cur_obj_id == frame_obj_id:
+                lines.append(cur_trace.replace(' ', '>', 1))
+            else:
+                lines.append(cur_trace)
+        ret = ''.join(lines)
+        print(ret)
+        return ret
+
     def get_threads(self):
         '''
         reconstructs the active threads, returns {thread_id: [trace]}
@@ -227,18 +275,8 @@ class Reader(object):
         thread_frames = self.sql(
             'SELECT thread_id, (SELECT id FROM pyframe WHERE object = stack_obj_id) FROM thread')
         for thread_id, frame_id in thread_frames:
-            frame_ids = []
-            while frame_id:
-                frame_ids.append(frame_id)
-                frame_id = self.sql_val(
-                    'SELECT id FROM pyframe WHERE object = ('
-                        'SELECT f_back_obj_id FROM pyframe WHERE id = ?)',
-                    (frame_id,))
-            frame_ids.reverse()
-            thread_stack_map[thread_id] = [
-                self.sql_val('SELECT trace FROM pyframe WHERE id = ?', (frame_id,))
-                for frame_id in frame_ids]
-        return thread_frames
+            thread_stack_map[thread_id] = self.get_stack(frame_id)
+        return thread_stack_map
 
     def _find_paths_from_any(self, src_obj_ids, dst_obj_id, limit=20):
         '''
@@ -670,6 +708,9 @@ class Console(Cmd):
         out_ref = self.reader.obj_refers_to(self.cur)
         if args:
             return res  # TODO (go to a specific one)
+
+        obj_type = self.reader.obj_type(self.cur)
+        self._print_option('go %s' % obj_type, "Instance of {}".format(self._obj_label(obj_type)))
 
         label = self._obj_label(self.cur)
         print("{} refers to {:,} objects:".format(
