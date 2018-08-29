@@ -235,7 +235,8 @@ class _Writer(object):
         # STEP 2 - GET KEYS
         if mode == "dict":
             keys = obj.keys()
-            key_dst += [('@{}'.format(self._ensure_db_id(key, refs=2)), obj[key]) for key in keys]
+            key_dst += [('@{}'.format(self._ensure_db_id(key, refs=2)), dict.__getitem__(obj, key))
+                        for key in keys]
         if mode == "list":
             key_dst += enumerate(obj)
         if mode == "set":
