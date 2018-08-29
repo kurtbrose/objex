@@ -21,7 +21,8 @@ CREATE TABLE object (
     pytype INTEGER NOT NULL,
     size INTEGER NOT NULL,
     len INTEGER,
-    refcount INTEGER
+    refcount INTEGER NOT NULL,
+    in_gc_objects INTEGER NOT NULL
 );
 
 CREATE TABLE pytype (

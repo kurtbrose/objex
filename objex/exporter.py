@@ -51,12 +51,20 @@ class _Writer(object):
     use_gc -- flag whether to call gc.get_referrers and gc.get_referrents
     on every object and record in addition to other information
     (default False because this is ~20x slower)
+
+    NOTE: this object tends to get really huge; it is meant to be disposable
+    (ideally, the whole process is disposable when the export process is run)
     '''
     _TRACKED_TYPES = (types.ModuleType, types.FrameType, types.FunctionType, types.CodeType)
 
     def __init__(self, conn, use_gc=False):
         self.conn = conn
         self.use_gc = use_gc
+        gc.collect()  # try to minimize garbage
+        # track these to separate out "extra" objects that are generated as part of
+        # the object walking process
+        self.all_objects = gc.get_objects()
+        self.all_object_ids = {id(e) for e in self.all_objects}
         # tracking objects by id gives two benefits:
         # 1- avoids calls to __eq__ which may execute arbitrary code
         # 2- avoids changing refcount on objects
@@ -71,13 +79,14 @@ class _Writer(object):
         self.ignore_ids = {id(e) for e in self.__dict__.values() + self.tracked_t_id_map.values()}
         self.ignore_ids.add(id(self.ignore_ids))
         self.ignore_ids.add(id(self.__dict__))
+        self.ignore_ids.add(id(self))
         # commented out tracing code
         # TODO how to put it in w/out hurting perf if off?
         # (maybe optional decorators?)
         # self.times = []
 
     @classmethod
-    def from_path(cls, path, use_gc=False, use_wal=True):
+    def write_to_path(cls, path, use_gc=False, use_wal=True):
         '''create a new instance that will dump state to path (which shouldn't exist)'''
         conn = sqlite3.connect(path)
         if use_wal:
@@ -87,7 +96,9 @@ class _Writer(object):
         conn.execute(
             "INSERT INTO meta (id, pid, hostname, memory_mb, gc_info) VALUES (0, ?, ?, ?, ?)",
             (os.getpid(), getfqdn(), memory, '[{},{},{}]'.format(*gc.get_count())))
-        return cls(conn, use_gc=use_gc)
+        writer = cls(conn, use_gc=use_gc)
+        writer.add_all()
+        writer.finish()
 
     def execute(self, sql, params):
         # start = time.time()
@@ -120,8 +131,8 @@ class _Writer(object):
             length = None
         refcount = sys.getrefcount(obj) - (refs + 1)
         self.execute(
-            "INSERT INTO object (id, pytype, size, len, refcount) VALUES (?, ?, ?, ?, ?)",
-            (obj_id, type_obj_id, sys.getsizeof(obj), length, refcount))
+            "INSERT INTO object (id, pytype, size, len, refcount, in_gc_objects) VALUES (?, ?, ?, ?, ?, ?)",
+            (obj_id, type_obj_id, sys.getsizeof(obj), length, refcount, obj_id in self.all_object_ids))
         # all of these are pretty rare (maybe optimize?)
         if id(obj) not in self.type_id_map and (is_type or isinstance(obj, type)):
             obj_type_id = self.type_id_map[id(obj)] = len(self.type_id_map)
@@ -330,10 +341,9 @@ class _Writer(object):
                 (self._ensure_db_id(frame, refs=2), thread_id))
 
     def add_all(self):
-        gc.collect()  # try to minimize garbage
         self.add_obj(type)
         self.add_frames()
-        for obj in gc.get_objects():
+        for obj in self.all_objects:
             self.add_obj(obj, refs=2)
 
     def finish(self):
@@ -353,9 +363,7 @@ def dump_graph(path, print_info=False, use_gc=False):
     before analysis
     '''
     start = time.time()
-    grapher = _Writer.from_path(path, use_gc=use_gc)
-    grapher.add_all()
-    grapher.finish()
+    _Writer.write_to_path(path, use_gc=use_gc)
     if print_info:
         duration = time.time() - start
         memory = _get_memory_mb()
@@ -370,7 +378,7 @@ def dump_graph(path, print_info=False, use_gc=False):
         # print "overall perf: {:0.3f} s/GiB, {:0.03f} ms/object".format(
         #     1024 * duration / memory, 1000 * duration / objects)
         # print "duration - db time:", duration - sum(grapher.times)
-        print "duration: {0:0.1f}".format(time.time() - grapher.started)
+        print "duration: {0:0.1f}".format(duration)
         print "compression - {:0.02f}MiB -> {:0.02f}MiB ({:0.01f}%)".format(
             memory, dumpsize, 100 * (1 - dumpsize / memory))
 
