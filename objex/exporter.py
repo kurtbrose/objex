@@ -212,20 +212,29 @@ class _Writer(object):
             mode = "dict"
         elif t is list or t is tuple:
             mode = "list"
+        elif t is set or t is frozenset:
+            mode = "set"
         elif t is types.FrameType:
             mode = "frame"
         elif t is types.FunctionType:
             mode = 'func'
-        elif isinstance(obj, dict):
+        elif isinstance(obj, dict):  # TODO: leverage MRO cache for isinstance stuff
             mode = "dict"
         elif isinstance(obj, (list, tuple)):
             mode = "list"
+        elif isinstance(obj, (set, frozenset)):
+            mode = "set"
+        # TODO: when there are subclasses of dict, list, etc go into "dual" mode
+        # where it is walked as an object and as a dict, list etc to catch the
+        # __dict__ and __slots__ of subclasses of builtins
         # STEP 2 - GET KEYS
         if mode == "dict":
             keys = obj.keys()
             key_dst += [('@{}'.format(self._ensure_db_id(key, refs=2)), obj[key]) for key in keys]
         if mode == "list":
             key_dst += enumerate(obj)
+        if mode == "set":
+            key_dst += zip(['*'] * len(obj), obj)
         if mode == "object":
             if hasattr(obj, "__dict__"):
                 key_dst += [('.' + key, dst) for key, dst in obj.__dict__.items()]
