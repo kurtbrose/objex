@@ -290,6 +290,7 @@ class _Writer(object):
             if obj.func_closure:  # (maybe) grab function closure
                 for varname, cell in zip(obj.func_code.co_freevars, obj.func_closure):
                     key_dst.append((".locals[{!r}]".format(varname), cell.cell_contents))
+                key_dst.append(('.func_closure', obj.func_closure))
             args, varargs, keywords, defaults = inspect.getargspec(obj)
             if defaults:  # (maybe) grab function defaults
                 for name, default in zip(reversed(args), reversed(defaults)):
