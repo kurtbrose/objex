@@ -49,3 +49,13 @@ Other:
 
 * convenience function for fork-and-export
 * support fork() equivalent for Windows (it borks on sockets, but that's fine for us)
+
+
+## Traversal
+
+* Iterators are an example of a group of "builtin" (aka implemented in
+  C) types that can hold onto a reference that's not accessible from
+  Python. There are listerators dictkey iterators, dictvalue
+  iterators, set iterators, etc. Luckily, like dictproxy they only
+  hold onto one reference and it's the relevant container. Might be
+  able to develop a heuristic around these kinds of types.
