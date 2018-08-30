@@ -409,9 +409,9 @@ class Reader(object):
         return self.sql(
             """
             SELECT name, count(object.id) FROM object JOIN pytype ON object.pytype = pytype.object
-            WHERE id NOT IN (SELECT dst FROM reference)
+            WHERE object.id NOT IN (SELECT dst FROM reference)
                 AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT) )
-                AND id NOT IN (SELECT base_obj_id FROM pytype_bases)
+                AND object.id NOT IN (SELECT base_obj_id FROM pytype_bases)
             GROUP BY name ORDER BY count(object.id) DESC LIMIT ?
             """,
             (limit,))

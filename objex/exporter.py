@@ -298,6 +298,7 @@ class _Writer(object):
                 key_dst.append(('.func_defaults', obj.func_defaults))
             key_dst.append((".func_code", obj.func_code))
             key_dst.append((".func_globals", obj.func_globals))
+            key_dst.append((".__doc__", obj.__doc__))
             # __module__ is a special case b/c unlike other dst values, we don't
             # want to call _ensure_db_id on the module; so it gets its own insert
             module = self._module_name2obj_id(obj.__module__)
@@ -330,6 +331,8 @@ class _Writer(object):
             ]
         elif extra_relationship is types.DictProxyType:
             key_dst.append(('.<proxied_dict>', gc.get_referents(obj)[0]))
+        elif extra_relationship is types.ModuleType:
+            key_dst.append(('.__doc__', obj.__doc__))
         if check_dict:
             if hasattr(obj, "__dict__"):
                 key_dst += [('.' + key, dst) for key, dst in obj.__dict__.items()]
@@ -375,6 +378,7 @@ class _Writer(object):
                     key_dst.append(('.__mro__', obj.__mro__))
                 except AttributeError:
                     pass
+                key_dst.append(('.__doc__', obj.__doc__))
         self.conn.executemany(
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
             [(db_id, self._ensure_db_id(dst, refs=2), key) for key, dst in key_dst])
@@ -424,7 +428,8 @@ _SPECIAL_TYPES = set([
     dict, list, tuple, set, frozenset, types.FrameType, types.FunctionType,
     types.GeneratorType, types.MethodType, types.UnboundMethodType,
     types.DictProxyType, classmethod, staticmethod, property,
-    types.BuiltinFunctionType, types.BuiltinMethodType])
+    types.BuiltinFunctionType, types.BuiltinMethodType,
+    types.ModuleType])
 
 
 def dump_graph(path, print_info=False, use_gc=False):
