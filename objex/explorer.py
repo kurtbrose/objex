@@ -466,6 +466,21 @@ class Reader(object):
             """,
             (limit,))
 
+    def random_missing_references_to_orphans_with_children(self, limit=20):
+        '''return random src, dst pairs that are found to be missing, where dst has children'''
+        return self.sql(
+            """
+            SELECT src, dst FROM gc_referrer WHERE dst in (
+                SELECT id FROM object WHERE
+                    id NOT IN (SELECT dst FROM reference)
+                    AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT) )
+                    AND id NOT IN (SELECT base_obj_id FROM pytype_bases)
+                    AND id IN (SELECT src FROM reference)
+                )
+                ORDER BY random() LIMIT ?
+            """,
+            (limit,))
+
     def referrers_to_orphans_with_children_type_count(self):
         return self.sql(
             """
