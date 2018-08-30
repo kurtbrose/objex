@@ -339,6 +339,7 @@ class _Writer(object):
             key_dst.append(('.<proxied_dict>', gc.get_referents(obj)[0]))
         elif extra_relationship is types.ModuleType:
             key_dst.append(('.__doc__', obj.__doc__))
+            check_dict = True
         if check_dict:
             if hasattr(obj, "__dict__"):
                 key_dst += [('.' + key, dst) for key, dst in obj.__dict__.items()]
