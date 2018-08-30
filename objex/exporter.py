@@ -292,7 +292,13 @@ class _Writer(object):
                 for name, default in zip(reversed(args), reversed(defaults)):
                     key_dst.append((".defaults[{!r}]".format(name), default))
             key_dst.append((".func_code", obj.func_code))
-            key_dst.append((".__module__", obj.__module__))
+            # __module__ is a special case b/c unlike other dst values, we don't
+            # want to call _ensure_db_id on the module; so it gets its own insert
+            module = self._module_name2obj_id(obj.__module__)
+            if module:
+                self.conn.execute(
+                    "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
+                    (db_id, module, ".__module__"))
         if scrape_as_obj:
             if hasattr(obj, "__dict__"):
                 key_dst += [('.' + key, dst) for key, dst in obj.__dict__.items()]
