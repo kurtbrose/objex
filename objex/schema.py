@@ -22,7 +22,8 @@ CREATE TABLE object (
     size INTEGER NOT NULL,
     len INTEGER,
     refcount INTEGER NOT NULL,
-    in_gc_objects INTEGER NOT NULL
+    in_gc_objects INTEGER NOT NULL,
+    is_gc_tracked INTEGER NOT NULL
 );
 
 CREATE TABLE pytype (

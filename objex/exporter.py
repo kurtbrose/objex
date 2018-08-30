@@ -130,9 +130,22 @@ class _Writer(object):
         except Exception:
             length = None
         refcount = sys.getrefcount(obj) - (refs + 1)
+        in_gc_objects = id(obj) in self.all_object_ids
+        is_gc_tracked = in_gc_objects or gc.is_tracked(obj)
         self.execute(
-            "INSERT INTO object (id, pytype, size, len, refcount, in_gc_objects) VALUES (?, ?, ?, ?, ?, ?)",
-            (obj_id, type_obj_id, sys.getsizeof(obj), length, refcount, obj_id in self.all_object_ids))
+            """
+            INSERT INTO object (id, pytype, size, len, refcount, in_gc_objects, is_gc_tracked)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                obj_id,
+                type_obj_id,
+                sys.getsizeof(obj),
+                length,
+                refcount,
+                in_gc_objects,
+                is_gc_tracked)
+            )
         # all of these are pretty rare (maybe optimize?)
         if id(obj) not in self.type_id_map and (is_type or isinstance(obj, type)):
             obj_type_id = self.type_id_map[id(obj)] = len(self.type_id_map)
@@ -221,43 +234,69 @@ class _Writer(object):
         self.ignore_ids.add(obj_id)
         db_id = self._ensure_db_id(obj, refs=refs)
         key_dst = []
-        mode = "object"
+        scrape_as_obj = False  # whether to scrape the __dict__ and __slots__
+        extra_relationship = None  # which special built-in to scrape as (dict, list, etc)
         t = type(obj)
         # STEP 1 - FIGURE OUT WHICH MODE TO USE
-        if t is dict:
-            mode = "dict"
-        elif t is list or t is tuple:
-            mode = "list"
-        elif t is set or t is frozenset:
-            mode = "set"
-        elif t is types.FrameType:
-            mode = "frame"
-        elif t is types.FunctionType:
-            mode = 'func'
-        elif isinstance(obj, dict):  # TODO: leverage MRO cache for isinstance stuff
-            mode = "dict"
-        elif isinstance(obj, (list, tuple)):
-            mode = "list"
-        elif isinstance(obj, (set, frozenset)):
-            mode = "set"
-        # TODO: when there are subclasses of dict, list, etc go into "dual" mode
-        # where it is walked as an object and as a dict, list etc to catch the
-        # __dict__ and __slots__ of subclasses of builtins
+        if t in (dict, list, tuple, set, frozenset, types.FrameType, types.FunctionType):
+            extra_relationship = t
+        else:
+            scrape_as_obj = True
+            if isinstance(obj, tuple):  # namedtuple assume these will be most common
+                extra_relationship = tuple
+            elif isinstance(obj, dict):
+                extra_relationship = dict
+            elif isinstance(obj, list):
+                extra_relationship = list
+            elif isinstance(obj, set):
+                extra_relationship = set
+            elif isinstance(obj, frozenset):
+                extra_relationship = frozenset
         # STEP 2 - GET KEYS
-        if mode == "dict":
+        if extra_relationship is dict:
             keys = obj.keys()
             key_dst += [('@{}'.format(self._ensure_db_id(key, refs=2)), dict.__getitem__(obj, key))
                         for key in keys]
-        if mode == "list":
+        elif extra_relationship in (list, tuple):
             key_dst += enumerate(obj)
-        if mode == "set":
+        elif extra_relationship in (set, frozenset):
             key_dst += zip(['*'] * len(obj), obj)
-        if mode == "object":
+        elif extra_relationship is types.FrameType:  # expensive to handle, but pretty rare
+            key_dst += [(".locals[{!r}]".format(key), val) for key, val in obj.f_locals.items()]
+            key_dst += [(".f_globals[{!r}]".format(key), val) for key, val in obj.f_globals.items()]
+            key_dst += [
+                (".f_globals", obj.f_globals),
+                (".f_back", obj.f_back),
+                (".f_code", obj.f_code),
+            ]
+        elif extra_relationship is types.FunctionType:
+            '''
+            >>> a = 1
+            >>> def b():
+            ...    c = 2
+            ...    def d():
+            ...       e = 3
+            ...       return a + c + 3
+            ...    return d
+            ...
+            >>> b().func_code.co_freevars
+            ('c',) 
+            >>> b().func_closure[0].cell_contents
+            2
+            '''
+            if obj.func_closure:  # (maybe) grab function closure
+                for varname, cell in zip(obj.func_code.co_freevars, obj.func_closure):
+                    key_dst.append((".locals[{!r}]".format(varname), cell.cell_contents))
+            args, varargs, keywords, defaults = inspect.getargspec(obj)
+            if defaults:  # (maybe) grab function defaults
+                for name, default in zip(reversed(args), reversed(defaults)):
+                    key_dst.append((".defaults[{!r}]".format(name), default))
+            key_dst.append((".func_code", obj.func_code))
+            key_dst.append((".__module__", obj.__module__))
+        if scrape_as_obj:
             if hasattr(obj, "__dict__"):
                 key_dst += [('.' + key, dst) for key, dst in obj.__dict__.items()]
                 key_dst.append(('.__dict__', obj.__dict__))
-            if hasattr(obj, "__module__"):
-                key_dst.append(('__module__', obj.__module__))
             if id(type(obj)) not in self.type_slots_map:
                 slot_names = set()
                 try:
@@ -282,37 +321,6 @@ class _Writer(object):
                     key_dst.append(('.' + key, object.__getattribute__(obj, key)))
                 except AttributeError:
                     pass  # just because a slot exists doesn't mean it has a value
-        if mode == 'frame':  # expensive to handle, but pretty rare
-            key_dst += [(".locals[{!r}]".format(key), val) for key, val in obj.f_locals.items()]
-            key_dst += [
-                (".f_globals", obj.f_globals),
-                (".f_back", obj.f_back),
-                (".f_code", obj.f_code),
-            ]
-        if mode == 'func':
-            '''
-            >>> a = 1
-            >>> def b():
-            ...    c = 2
-            ...    def d():
-            ...       e = 3
-            ...       return a + c + 3
-            ...    return d
-            ...
-            >>> b().func_code.co_freevars
-            ('c',)
-            >>> b().func_closure[0].cell_contents
-            2
-            '''
-            if obj.func_closure:  # (maybe) grab function closure
-                for varname, cell in zip(obj.func_code.co_freevars, obj.func_closure):
-                    key_dst.append((".locals[{!r}]".format(varname), cell.cell_contents))
-            args, varargs, keywords, defaults = inspect.getargspec(obj)
-            if defaults:  # (maybe) grab function defaults
-                for name, default in zip(reversed(args), reversed(defaults)):
-                    key_dst.append((".defaults[{!r}]".format(name), default))
-            key_dst.append(("func_code", obj.func_code))
-            key_dst.append(("__module__", obj.__module__))
         self.conn.executemany(
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
             [(db_id, self._ensure_db_id(dst, refs=2), key) for key, dst in key_dst])
@@ -341,10 +349,13 @@ class _Writer(object):
                 (self._ensure_db_id(frame, refs=2), thread_id))
 
     def add_all(self):
+        # ignore this frame to avoid a bunch of spurious data
+        self.ignore_ids.add(id(sys._getframe()))
         self.add_obj(type)
         self.add_frames()
         for obj in self.all_objects:
             self.add_obj(obj, refs=2)
+        self.ignore_ids.remove(id(sys._getframe()))
 
     def finish(self):
         self.conn.execute(
@@ -370,7 +381,7 @@ def dump_graph(path, print_info=False, use_gc=False):
         dumpsize = os.stat(path).st_size / 1024.0 / 1024  # MiB
         objects = len(gc.get_objects())
         print "process memory usage: {:0.3f}MiB".format(memory)
-        print "total objects:", objects
+        print "total gc objects:", objects
         # print "wrote {} rows in {}".format(
         #     len(grapher.times), duration)
         # print "db perf: {:0.3f}us/row".format(

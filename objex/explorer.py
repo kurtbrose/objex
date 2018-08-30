@@ -421,6 +421,39 @@ class Reader(object):
             """,
             (limit,))
 
+    def orphan_with_children_count(self):
+        '''
+        objects with outgoing but no incoming references
+        '''
+        return self.sql_val(
+            """
+            SELECT count(*) FROM object WHERE id NOT IN (SELECT dst FROM reference)
+                AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT))
+                AND id IN (SELECT src FROM reference)
+            """)
+
+    def random_orphans_with_children(self, limit=20):
+        return self.sql_list(
+            """
+            SELECT id FROM object WHERE id NOT IN (SELECT dst FROM reference)
+                AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT))
+                AND id IN (SELECT src FROM reference)
+                ORDER BY random() LIMIT ?
+            """,
+            (limit,))
+
+    def random_referrers_to_orphans_with_children(self, limit=20):
+        return self.sql(
+            """
+            SELECT count(*), src FROM gc_referrer WHERE dst in (
+                SELECT id FROM object WHERE id NOT IN (SELECT dst FROM reference)
+                    AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT))
+                    AND id IN (SELECT src FROM reference)
+                )
+                GROUP BY src ORDER BY random() LIMIT ?
+            """,
+            (limit,))
+
     def most_common_types(self, limit=20):
         """return the most common types, in the form [(number, type-obj-id), ...]"""
         return self.sql(
