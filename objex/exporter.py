@@ -349,6 +349,10 @@ class _Writer(object):
                     key_dst.append(('.__slots__', obj.__slots__))
                 except AttributeError:
                     pass
+                try:
+                    key_dst.append(('.__mro__', obj.__mro__))
+                except AttributeError:
+                    pass
         self.conn.executemany(
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
             [(db_id, self._ensure_db_id(dst, refs=2), key) for key, dst in key_dst])
