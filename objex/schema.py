@@ -107,4 +107,8 @@ CREATE INDEX reference_src ON reference(src);
 CREATE INDEX reference_dst ON reference(dst);
 CREATE INDEX reference_ref ON reference(ref);
 CREATE INDEX reference_all ON reference(src, dst, ref);
+CREATE INDEX function_object ON function(object);
+CREATE INDEX pyframe_object ON pyframe(object);
+CREATE INDEX pycode_object ON pycode(object);
+CREATE INDEX module_object ON module(object);
 '''
