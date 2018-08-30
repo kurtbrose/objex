@@ -357,8 +357,8 @@ class Reader(object):
             obj_ref_path = []
             for i in range(len(path) - 1):
                 ref = self.sql_val(
-                    'SELECT ref FROM reference WHERE src = ? and dst = ?',
-                    (path[i], path[i + 1]))
+                    "SELECT ref FROM reference WHERE src = ? and (dst = ? or ref = '@' || ?)",
+                    (path[i], path[i + 1], path[i + 1]))
                 obj_ref_path.append((path[i], ref))
             obj_ref_paths.append(obj_ref_path)
         return obj_ref_paths
