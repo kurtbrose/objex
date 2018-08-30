@@ -67,6 +67,19 @@ c = C()
 
 c.c = 'lmao'
 
+
+class D(dict): pass
+
+d = D()
+
+class L(list): pass
+
+l = L()
+
+class S(set): pass
+
+s = S()
+
 # now that a bunch of balls are in the air, dump them to disk
 if os.path.exists('objex-test.db'):
     os.remove('objex-test.db')
