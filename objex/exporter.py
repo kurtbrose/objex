@@ -313,10 +313,17 @@ class _Writer(object):
                 ('im_func', obj.im_func),
                 ('im_self', obj.im_self)
             ]
+        elif extra_relationship is types.DictProxyType:
+            key_dst.append(('.<proxied_dict>', gc.get_referents(obj)[0]))
         if check_dict:
             if hasattr(obj, "__dict__"):
                 key_dst += [('.' + key, dst) for key, dst in obj.__dict__.items()]
-                key_dst.append(('.__dict__', obj.__dict__))
+                __dict__ = obj.__dict__
+                if type(__dict__) is types.DictProxyType:
+                    key_dst.append(('.__dict__<proxy>', __dict__))
+                    key_dst.append(('.__dict__', gc.get_referents(__dict__)[0]))
+                else:
+                    key_dst.append(('.__dict__', __dict__))
         if check_slots:
             if id(type(obj)) not in self.type_slots_map:
                 slot_names = set()
@@ -400,7 +407,8 @@ class _Writer(object):
 # special types that have special-handling code for discovering contents
 _SPECIAL_TYPES = set([
     dict, list, tuple, set, frozenset, types.FrameType, types.FunctionType,
-    types.GeneratorType, types.MethodType, types.UnboundMethodType])
+    types.GeneratorType, types.MethodType, types.UnboundMethodType,
+    types.DictProxyType])
 
 
 def dump_graph(path, print_info=False, use_gc=False):
