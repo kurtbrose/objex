@@ -295,6 +295,7 @@ class _Writer(object):
             if defaults:  # (maybe) grab function defaults
                 for name, default in zip(reversed(args), reversed(defaults)):
                     key_dst.append((".defaults[{!r}]".format(name), default))
+                key_dst.append(('.func_defaults', obj.func_defaults))
             key_dst.append((".func_code", obj.func_code))
             key_dst.append((".func_globals", obj.func_globals))
             # __module__ is a special case b/c unlike other dst values, we don't
