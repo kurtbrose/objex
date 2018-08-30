@@ -54,6 +54,7 @@ def make_analysis_db(collection_db_path, analysis_db_path):
             "analysis DB already exists at {}".format(analysis_db_path))
     shutil.copyfile(collection_db_path, analysis_db_path)
     conn = sqlite3.connect(analysis_db_path)
+    conn.text_factory = str
     _run_ddl(conn, _INDICES)
     _add_class_references(conn)
 
@@ -66,6 +67,7 @@ class Reader(object):
     def __init__(self, path):
         self.path = path
         self.conn = sqlite3.connect(path)
+        self.conn.text_factory = str
 
     def sql(self, sql, args=None):
         '''run SELECT sql against underling DB'''

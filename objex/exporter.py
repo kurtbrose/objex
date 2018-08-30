@@ -90,6 +90,7 @@ class _Writer(object):
     def write_to_path(cls, path, use_gc=False, use_wal=True):
         '''create a new instance that will dump state to path (which shouldn't exist)'''
         conn = sqlite3.connect(path)
+        conn.text_factory = str
         if use_wal:
             conn.execute("PRAGMA journal_mode = WAL")
         _run_ddl(conn, _SCHEMA)
