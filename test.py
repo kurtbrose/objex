@@ -60,6 +60,12 @@ class S(set): pass
 s = S()
 def gen(): yield 1; yield 2
 g = gen()
+class E(object):
+    @staticmethod
+    def s(): pass
+    @classmethod
+    def c(cls): pass
+e = E()
 
 # now that a bunch of balls are in the air, dump them to disk
 if os.path.exists('objex-test.db'):

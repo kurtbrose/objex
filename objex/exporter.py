@@ -302,6 +302,12 @@ class _Writer(object):
         elif extra_relationship is types.GeneratorType:
             key_dst.append(('.gi_code', obj.gi_code))
             key_dst.append(('.gi_frame', obj.gi_frame))
+        elif extra_relationship in (types.MethodType, types.UnboundMethodType):
+            key_dst += [
+                ('im_class', obj.im_class),
+                ('im_func', obj.im_func),
+                ('im_self', obj.im_self)
+            ]
         if scrape_as_obj:
             if hasattr(obj, "__dict__"):
                 key_dst += [('.' + key, dst) for key, dst in obj.__dict__.items()]
@@ -377,7 +383,7 @@ class _Writer(object):
 # special types that have special-handling code for discovering contents
 _SPECIAL_TYPES = set([
     dict, list, tuple, set, frozenset, types.FrameType, types.FunctionType,
-    types.GeneratorType])
+    types.GeneratorType, types.MethodType, types.UnboundMethodType])
 
 
 def dump_graph(path, print_info=False, use_gc=False):
