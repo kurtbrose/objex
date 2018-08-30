@@ -235,14 +235,16 @@ class _Writer(object):
         self.ignore_ids.add(obj_id)
         db_id = self._ensure_db_id(obj, refs=refs)
         key_dst = []
-        scrape_as_obj = False  # whether to scrape the __dict__ and __slots__
+        check_dict, check_slots = False, False  # whether to scrape the __dict__ and __slots__
         extra_relationship = None  # which special built-in to scrape as (dict, list, etc)
         t = type(obj)
         # STEP 1 - FIGURE OUT WHICH MODE TO USE
         if t in _SPECIAL_TYPES:
             extra_relationship = t
         else:
-            scrape_as_obj = True
+            check_dict, check_slots = True, True
+            # check for possible sub-classes
+            # TODO: cache the sub-class info based on type-id, same as slots and type-is-type
             if isinstance(obj, tuple):  # namedtuple assume these will be most common
                 extra_relationship = tuple
             elif isinstance(obj, dict):
@@ -301,6 +303,7 @@ class _Writer(object):
                 self.conn.execute(
                     "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
                     (db_id, module, ".__module__"))
+            check_dict = True
         elif extra_relationship is types.GeneratorType:
             key_dst.append(('.gi_code', obj.gi_code))
             key_dst.append(('.gi_frame', obj.gi_frame))
@@ -310,10 +313,11 @@ class _Writer(object):
                 ('im_func', obj.im_func),
                 ('im_self', obj.im_self)
             ]
-        if scrape_as_obj:
+        if check_dict:
             if hasattr(obj, "__dict__"):
                 key_dst += [('.' + key, dst) for key, dst in obj.__dict__.items()]
                 key_dst.append(('.__dict__', obj.__dict__))
+        if check_slots:
             if id(type(obj)) not in self.type_slots_map:
                 slot_names = set()
                 try:
