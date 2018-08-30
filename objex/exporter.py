@@ -315,6 +315,19 @@ class _Writer(object):
                 ('im_func', obj.im_func),
                 ('im_self', obj.im_self)
             ]
+        elif extra_relationship is types.BuiltinMethodType:
+            try:
+                key_dst.append(('.__self__', obj.__self__))
+            except AttributeError:
+                pass
+        elif extra_relationship in (classmethod, staticmethod):
+            key_dst.append(('.__func__', obj.__func__))
+        elif extra_relationship is property:
+            key_dst += [
+                ('.fget', obj.fget),
+                ('.fset', obj.fset),
+                ('.fdel', obj.fdel),
+            ]
         elif extra_relationship is types.DictProxyType:
             key_dst.append(('.<proxied_dict>', gc.get_referents(obj)[0]))
         if check_dict:
@@ -410,7 +423,8 @@ class _Writer(object):
 _SPECIAL_TYPES = set([
     dict, list, tuple, set, frozenset, types.FrameType, types.FunctionType,
     types.GeneratorType, types.MethodType, types.UnboundMethodType,
-    types.DictProxyType])
+    types.DictProxyType, classmethod, staticmethod, property,
+    types.BuiltinFunctionType, types.BuiltinMethodType])
 
 
 def dump_graph(path, print_info=False, use_gc=False):
