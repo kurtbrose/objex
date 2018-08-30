@@ -454,6 +454,21 @@ class Reader(object):
             """,
             (limit,))
 
+    def referrers_to_orphans_with_children_type_count(self):
+        return self.sql(
+            """
+            SELECT name, count(object.id) FROM object JOIN pytype ON object.pytype = pytype.object
+            WHERE object.id IN (
+                SELECT src FROM gc_referrer WHERE dst in (
+                    SELECT id FROM object WHERE id NOT IN (SELECT dst FROM reference)
+                        AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT))
+                        AND id IN (SELECT src FROM reference)
+                    )
+            )
+            GROUP BY name ORDER BY count(object.id) DESC
+            """)
+
+
     def most_common_types(self, limit=20):
         """return the most common types, in the form [(number, type-obj-id), ...]"""
         return self.sql(
