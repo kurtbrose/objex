@@ -70,6 +70,9 @@ e = E()
 # now that a bunch of balls are in the air, dump them to disk
 if os.path.exists('objex-test.db'):
     os.remove('objex-test.db')
+# first one for perf stats
+dump_graph('objex-test.db', print_info=True, use_gc=False)
+os.remove('objex-test.db')
 dump_graph('objex-test.db', print_info=True, use_gc=True)
 if os.path.exists('objex-test-analysis.db'):
     os.remove('objex-test-analysis.db')
