@@ -271,6 +271,7 @@ class _Writer(object):
                 (".f_globals", obj.f_globals),
                 (".f_back", obj.f_back),
                 (".f_code", obj.f_code),
+                (".f_builtins", obj.f_builtins),
             ]
         elif extra_relationship is types.FunctionType:
             '''
@@ -314,20 +315,24 @@ class _Writer(object):
             key_dst += [
                 ('im_class', obj.im_class),
                 ('im_func', obj.im_func),
-                ('im_self', obj.im_self)
+                ('im_self', obj.im_self),
+                ('__doc__', obj.__doc__),
             ]
         elif extra_relationship is types.BuiltinMethodType:
             try:
                 key_dst.append(('.__self__', obj.__self__))
             except AttributeError:
                 pass
+            key_dst.append(('.__doc__', obj.__doc__))
         elif extra_relationship in (classmethod, staticmethod):
             key_dst.append(('.__func__', obj.__func__))
+            key_dst.append(('.__doc__', obj.__doc__))
         elif extra_relationship is property:
             key_dst += [
                 ('.fget', obj.fget),
                 ('.fset', obj.fset),
                 ('.fdel', obj.fdel),
+                ('.__doc__', obj.__doc__),
             ]
         elif extra_relationship is types.DictProxyType:
             key_dst.append(('.<proxied_dict>', gc.get_referents(obj)[0]))
@@ -382,15 +387,6 @@ class _Writer(object):
         self.conn.executemany(
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
             [(db_id, self._ensure_db_id(dst, refs=2), key) for key, dst in key_dst])
-        if self.use_gc:
-            for referrer in gc.get_referrers(obj):
-                self.conn.execute(
-                    "INSERT INTO gc_referrer (src, dst) VALUES (?, ?)",
-                    (self._ensure_db_id(referrer, refs=1), db_id))
-            for referent in gc.get_referents(obj):
-                self.conn.execute(
-                    "INSERT INTO gc_referent (src, dst) VALUES (?, ?)",
-                    (db_id, self._ensure_db_id(referent, refs=1)))
         return db_id
 
     def add_frames(self):
@@ -413,6 +409,21 @@ class _Writer(object):
         self.add_frames()
         for obj in self.all_objects:
             self.add_obj(obj, refs=2)
+        if self.use_gc:
+            for obj in self.all_objects:
+                db_id = self._ensure_db_id(obj)
+                for referrer in gc.get_referrers(obj):
+                    if id(referrer) in self.ignore_ids:
+                        continue
+                    self.conn.execute(
+                        "INSERT INTO gc_referrer (src, dst) VALUES (?, ?)",
+                        (self._ensure_db_id(referrer, refs=1), db_id))
+                for referent in gc.get_referents(obj):
+                    if id(referent) in self.ignore_ids:
+                        continue
+                    self.conn.execute(
+                        "INSERT INTO gc_referent (src, dst) VALUES (?, ?)",
+                        (db_id, self._ensure_db_id(referent, refs=1)))
         self.ignore_ids.remove(id(sys._getframe()))
 
     def finish(self):

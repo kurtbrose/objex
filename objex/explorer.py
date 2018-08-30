@@ -427,6 +427,18 @@ class Reader(object):
             """,
             (limit,))
 
+    def random_orphans_with_typename(self, typename, limit=20):
+        return self.sql_list(
+            """
+            SELECT object.id FROM object JOIN pytype ON object.pytype = pytype.object WHERE
+                object.id NOT IN (SELECT dst FROM reference)
+                AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT) )
+                AND object.id NOT IN (SELECT base_obj_id FROM pytype_bases)
+                AND name LIKE ?
+            ORDER BY random() LIMIT ?
+            """,
+            (typename, limit))
+
     def orphan_with_children_count(self):
         '''
         objects with outgoing but no incoming references
