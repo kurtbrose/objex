@@ -399,16 +399,19 @@ class Reader(object):
     def get_orphan_count(self):
         return self.sql_val(
             """
-            SELECT count(*) FROM object WHERE id NOT IN (SELECT dst FROM reference)
-                AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT))
+            SELECT count(*) FROM object WHERE
+                id NOT IN (SELECT dst FROM reference)
+                AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT) )
+                AND id NOT IN (SELECT base_obj_id FROM pytype_bases)
             """)
 
     def get_orphan_type_count(self, limit=20):
         return self.sql(
             """
             SELECT name, count(object.id) FROM object JOIN pytype ON object.pytype = pytype.object
-            WHERE object.id NOT IN (SELECT dst FROM reference)
-                  AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT))
+            WHERE id NOT IN (SELECT dst FROM reference)
+                AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT) )
+                AND id NOT IN (SELECT base_obj_id FROM pytype_bases)
             GROUP BY name ORDER BY count(object.id) DESC LIMIT ?
             """,
             (limit,))
@@ -416,8 +419,11 @@ class Reader(object):
     def random_orphans(self, limit=20):
         return self.sql_list(
             """
-            SELECT id FROM object WHERE id NOT IN (SELECT dst FROM reference) AND NOT EXISTS (
-                SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT) ) ORDER BY random() LIMIT ?
+            SELECT id FROM object WHERE
+                id NOT IN (SELECT dst FROM reference)
+                AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT) )
+                AND id NOT IN (SELECT base_obj_id FROM pytype_bases)
+            ORDER BY random() LIMIT ?
             """,
             (limit,))
 
@@ -427,16 +433,20 @@ class Reader(object):
         '''
         return self.sql_val(
             """
-            SELECT count(*) FROM object WHERE id NOT IN (SELECT dst FROM reference)
-                AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT))
+            SELECT count(*) FROM object WHERE
+                id NOT IN (SELECT dst FROM reference)
+                AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT) )
+                AND id NOT IN (SELECT base_obj_id FROM pytype_bases)
                 AND id IN (SELECT src FROM reference)
             """)
 
     def random_orphans_with_children(self, limit=20):
         return self.sql_list(
             """
-            SELECT id FROM object WHERE id NOT IN (SELECT dst FROM reference)
-                AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT))
+            SELECT id FROM object WHERE
+                id NOT IN (SELECT dst FROM reference)
+                AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT) )
+                AND id NOT IN (SELECT base_obj_id FROM pytype_bases)
                 AND id IN (SELECT src FROM reference)
                 ORDER BY random() LIMIT ?
             """,
@@ -446,8 +456,10 @@ class Reader(object):
         return self.sql(
             """
             SELECT count(*), src FROM gc_referrer WHERE dst in (
-                SELECT id FROM object WHERE id NOT IN (SELECT dst FROM reference)
-                    AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT))
+                SELECT id FROM object WHERE
+                    id NOT IN (SELECT dst FROM reference)
+                    AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT) )
+                    AND id NOT IN (SELECT base_obj_id FROM pytype_bases)
                     AND id IN (SELECT src FROM reference)
                 )
                 GROUP BY src ORDER BY random() LIMIT ?
@@ -460,8 +472,10 @@ class Reader(object):
             SELECT name, count(object.id) FROM object JOIN pytype ON object.pytype = pytype.object
             WHERE object.id IN (
                 SELECT src FROM gc_referrer WHERE dst in (
-                    SELECT id FROM object WHERE id NOT IN (SELECT dst FROM reference)
-                        AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT))
+                    SELECT id FROM object WHERE
+                        id NOT IN (SELECT dst FROM reference)
+                        AND NOT EXISTS (SELECT 1 FROM reference WHERE ref = '@' || CAST(object.id AS TEXT) )
+                        AND id NOT IN (SELECT base_obj_id FROM pytype_bases)
                         AND id IN (SELECT src FROM reference)
                     )
             )
