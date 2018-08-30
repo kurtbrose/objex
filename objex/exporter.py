@@ -72,6 +72,7 @@ class _Writer(object):
         self.object_id_map = {}  # map of object ids to object rowids
         self.tracked_t_id_map = {t: {} for t in self._TRACKED_TYPES}
         self.type_slots_map = {}  # map of type ids to __slots__
+        self.type_is_type_map = {}  # map of whether a type is a type
         self.modules_map = dict(sys.modules)  # map of __module__ to fake modules when no entry in sys.modules
         self.started = time.time()
         # ignore ids not just to avoid analysis noise, but because these can
@@ -326,6 +327,7 @@ class _Writer(object):
                         except AttributeError:
                             pass
                 self.type_slots_map[id(type(obj))] = slot_names or ()
+                self.type_is_type_map[id(type(obj))] = issubclass(type(obj), type)
                 # () is a singleton which creates less object noise than set()
             for key in self.type_slots_map[id(type(obj))]:
                 if key in ('__dict__', '__weakref__'):
@@ -337,6 +339,12 @@ class _Writer(object):
                     key_dst.append(('.' + key, object.__getattribute__(obj, key)))
                 except AttributeError:
                     pass  # just because a slot exists doesn't mean it has a value
+            if self.type_is_type_map[id(type(obj))]:
+                key_dst.append(('.__bases__', obj.__bases__))
+                try:
+                    key_dst.append(('.__slots__', obj.__slots__))
+                except AttributeError:
+                    pass
         self.conn.executemany(
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
             [(db_id, self._ensure_db_id(dst, refs=2), key) for key, dst in key_dst])
