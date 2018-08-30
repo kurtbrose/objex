@@ -238,7 +238,7 @@ class _Writer(object):
         extra_relationship = None  # which special built-in to scrape as (dict, list, etc)
         t = type(obj)
         # STEP 1 - FIGURE OUT WHICH MODE TO USE
-        if t in (dict, list, tuple, set, frozenset, types.FrameType, types.FunctionType):
+        if t in _SPECIAL_TYPES:
             extra_relationship = t
         else:
             scrape_as_obj = True
@@ -299,6 +299,9 @@ class _Writer(object):
                 self.conn.execute(
                     "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
                     (db_id, module, ".__module__"))
+        elif extra_relationship is types.GeneratorType:
+            key_dst.append(('.gi_code', obj.gi_code))
+            key_dst.append(('.gi_frame', obj.gi_frame))
         if scrape_as_obj:
             if hasattr(obj, "__dict__"):
                 key_dst += [('.' + key, dst) for key, dst in obj.__dict__.items()]
@@ -369,6 +372,12 @@ class _Writer(object):
             (time.time() - self.started,))
         self.conn.commit()
         self.conn.close()
+
+
+# special types that have special-handling code for discovering contents
+_SPECIAL_TYPES = set([
+    dict, list, tuple, set, frozenset, types.FrameType, types.FunctionType,
+    types.GeneratorType])
 
 
 def dump_graph(path, print_info=False, use_gc=False):

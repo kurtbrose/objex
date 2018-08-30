@@ -28,25 +28,17 @@ def stacker(n=200):
     else:
         return stacker(n - 1)
 
-
 t = threading.Thread(target=stacker)
 t.daemon = True
 t.start()
 
-
 thread.start_new_thread(stacker, ())
 
-
 class NoneModule(object): pass  # sometimes __module__ = None
-
 NoneModule.__module__ = None
-
 def none_module(): pass
-
 none_module.__module__ = None
-
 def garbage_module(): pass
-
 garbage_module.__module__ = 3.141
 
 
@@ -54,31 +46,20 @@ garbage_module.__module__ = 3.141
 
 class A(object):
   __slots__ = ('a',)
-
-
 class B(A):
   __slots__ = ('b',)
-
-
 class C(B):
   pass
-
 c = C()
-
 c.c = 'lmao'
-
-
 class D(dict): pass
-
 d = D()
-
 class L(list): pass
-
 l = L()
-
 class S(set): pass
-
 s = S()
+def gen(): yield 1; yield 2
+g = gen()
 
 # now that a bunch of balls are in the air, dump them to disk
 if os.path.exists('objex-test.db'):
