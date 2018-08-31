@@ -567,12 +567,9 @@ class Reader(object):
         '''
         return self.sql_val(
             """
-            SELECT id FROM object WHERE EXISTS (
-                SELECT 1 FROM reference WHERE
-                    dst = object.id AND
-                    src = (SELECT object FROM module WHERE name = ?) AND
-                    ref = '.' || ?
-            )
+            SELECT dst FROM reference WHERE
+                src = (SELECT object FROM module WHERE name = ?) AND
+                ref = '.' || ?
             """,
             (module_name, var_name)
         )
