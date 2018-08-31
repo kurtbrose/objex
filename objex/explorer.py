@@ -219,7 +219,7 @@ class Reader(object):
 
     def instances_by_typename(self, typename):
         return self.sql(
-            'SELECT id FROM object WHERE pytype = (SELECT id FROM pytype WHERE name = ?)',
+            'SELECT id FROM object WHERE pytype = (SELECT object FROM pytype WHERE name = ?)',
             (typename,))
 
     def get_modules(self):
