@@ -595,6 +595,36 @@ class Reader(object):
         return self.sql_val('SELECT object FROM object_mark WHERE mark = ?', (mark,))
 
 
+def go_to_path(reader, path):
+    '''
+    Traverses a path of the form a.b.c
+    If the path starts with a digit, that is assumed to be the id of an object
+    otherwise, it attempts to find the largest prefix that matches a module
+    name
+    '''
+    if path[0].isdigit():
+        start, rest = re.match(r'(\d+)(.*)').groups()
+        start = int(start)
+    else:
+        for i in [0] + range(path.count('.')):
+            modulename = path.rsplit('.', i + 1)[0]
+            start = reader.sql_val(
+                "SELECT object FROM module WHERE name = ?", (modulename,), default=None)
+            if start:
+                break
+        if not start:
+            raise ValueError("coun't find start of path {!r}".format(path))
+        rest = path[len(modulename + '.'):]  # modulename + '.'
+    segs = rest.split('.')
+    cur = start
+    sofar = [start]
+    for seg in segs:
+        sofar.append(seg)
+        cur = reader.sql_val(
+            "SELECT dst FROM reference WHERE src = ? and ref = ?", (cur, '.' + seg))
+    return cur
+
+
 class Console(Cmd):
     prompt = 'objex> '
 
@@ -903,7 +933,12 @@ class Console(Cmd):
             print('go command expects one argument')
             return
         target = args[0]
-        target = self._to_id(target)
+        if '.' in target:
+            if target.startswith('.'):
+                target = str(self.cur) + target
+            target = go_to_path(self.reader, target)
+        else:
+            target = self._to_id(target)
         if target is None:
             return
         self.history_idx = len(self.history)
