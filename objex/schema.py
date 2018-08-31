@@ -95,7 +95,7 @@ CREATE TABLE gc_referent (
     dst INTEGER NOT NULL
 );
 
-CREATE TABLE marked_objects (
+CREATE TABLE object_mark (
     id INTEGER PRIMARY KEY,
     object INTEGER NOT NULL,
     mark TEXT NOT NULL UNIQUE
@@ -122,7 +122,7 @@ CREATE INDEX pycode_object ON pycode(object);
 CREATE INDEX module_name ON module(name);
 CREATE INDEX module_object ON module(object);
 CREATE INDEX pytype_bases_all ON pytype_bases(obj_id, base_obj_id);
-CREATE INDEX marked_objects_all ON marked_objects(object, mark);
+CREATE INDEX object_mark_all ON object_mark(object, mark);
 CREATE INDEX gc_referrer_all ON gc_referrer(src, dst);
 CREATE INDEX gc_referent_all ON gc_referent(src, dst);
 '''

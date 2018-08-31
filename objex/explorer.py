@@ -577,6 +577,26 @@ class Reader(object):
             (module_name, var_name)
         )
 
+    def mark_object(self, obj_id, mark):
+        '''
+        mark an object with a unique name persistently in the database
+        so it can be found later; overwrites whatever else was pointed to that mark before
+        '''
+        self.sql('DELETE FROM object_mark WHERE mark = ?', (mark,))
+        self.sql('INSERT INTO object_mark (object, mark) VALUES (?, ?)', (obj_id, mark))
+
+    def get_marks(self, obj_id):
+        '''
+        get any marks that have been applied to an object
+        '''
+        return self.sql_list('SELECT mark FROM object_mark WHERE object = ?', (obj_id,))
+
+    def get_object(self, mark):
+        '''
+        get the object that has had a mark applied
+        '''
+        return self.sql_val('SELECT object FROM object_mark WHERE mark = ?', (mark,))
+
 
 class Console(Cmd):
     prompt = 'objex> '
@@ -701,20 +721,25 @@ class Console(Cmd):
         return True
 
     def _obj_label(self, obj_id):
+        marks = self.reader.get_marks(obj_id)
+        if marks:
+            mark_label = "{" + ", ".join(marks) + "}"
+        else:
+            mark_label = ""
+        coloring = lambda s: s
         if self.reader.obj_is_type(obj_id):
-            return colored("<type {}#{}>".format(
-                self.reader.typequalname(obj_id), obj_id), 'green')
-        if self.reader.obj_is_module(obj_id):
-            return "<module {}#{}>".format(
-                self.reader.modulename(obj_id), obj_id)
-        if self.reader.obj_is_func(obj_id):
-            return "<function {}#{}>".format(
-                self.reader.funcname(obj_id), obj_id)
-        if self.reader.obj_is_frame(obj_id):
-            return "<frame({})#{}>".format(
-                self.reader.frame_codename(obj_id), obj_id)
-        return colored("<{}#{}>".format(
-            self.reader.obj_typequalname(obj_id), obj_id), 'red')
+            name = "type " + self.reader.typequalname(obj_id)
+            coloring = lambda s: colored(s, 'green')
+        elif self.reader.obj_is_module(obj_id):
+            name = "module " + self.reader.modulename(obj_id)
+        elif self.reader.obj_is_func(obj_id):
+            name = "function " + self.reader.funcname(obj_id)
+        elif self.reader.obj_is_frame(obj_id):
+            name = "frame " + self.reader.frame_codename(obj_id)
+        else:
+            name = self.reader.obj_typequalname(obj_id)
+            coloring = lambda s: colored(s, 'red')
+        return coloring("<{}{}#{}>".format(name, mark_label, obj_id))
 
     def _ref(self, ref):
         '''translate ref for display'''
@@ -922,6 +947,9 @@ class Console(Cmd):
         for ref_path in ref_paths:
             print(self._ref_path(ref_path))
         print()
+
+    def do_mark(self, args):
+        self.reader.mark_object(self.cur, args[0])
 
     def do_top(self, args):
         if len(args) == 2:
