@@ -6,6 +6,7 @@ import os
 from cmd import Cmd
 import pprint
 import random
+import re
 import shutil
 import sqlite3
 try:
@@ -603,8 +604,9 @@ def go_to_path(reader, path):
     name
     '''
     if path[0].isdigit():
-        start, rest = re.match(r'(\d+)(.*)').groups()
+        start, rest = re.match(r'(\d+)(.*)', path).groups()
         start = int(start)
+        rest = rest[1:]  # get rid of leading '.'
     else:
         for i in [0] + range(path.count('.')):
             modulename = path.rsplit('.', i + 1)[0]
