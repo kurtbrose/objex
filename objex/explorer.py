@@ -596,6 +596,9 @@ class Reader(object):
         return self.sql_val('SELECT object FROM object_mark WHERE mark = ?', (mark,))
 
 
+class PathFailure(Exception): pass
+
+
 def go_to_path(reader, path):
     '''
     Traverses a path of the form a.b.c
@@ -607,6 +610,7 @@ def go_to_path(reader, path):
         start, rest = re.match(r'(\d+)(.*)', path).groups()
         start = int(start)
         rest = rest[1:]  # get rid of leading '.'
+        sofar = []
     else:
         for i in [0] + range(path.count('.')):
             modulename = path.rsplit('.', i + 1)[0]
@@ -615,15 +619,20 @@ def go_to_path(reader, path):
             if start:
                 break
         if not start:
-            raise ValueError("coun't find start of path {!r}".format(path))
+            raise PathFailure("couldn't find start of path {!r}".format(path))
         rest = path[len(modulename + '.'):]  # modulename + '.'
+        sofar = [modulename]
     segs = rest.split('.')
     cur = start
-    sofar = [start]
     for seg in segs:
         sofar.append(seg)
         cur = reader.sql_val(
-            "SELECT dst FROM reference WHERE src = ? and ref = ?", (cur, '.' + seg))
+            "SELECT dst FROM reference WHERE src = ? and ref = ?",
+            (cur, '.' + seg),
+            default=None)
+        if cur is None:
+            raise PathFailure(
+                "failed on path {} after {}".format(path, '.'.join(sofar)))
     return cur
 
 
@@ -938,7 +947,11 @@ class Console(Cmd):
         if '.' in target:
             if target.startswith('.'):
                 target = str(self.cur) + target
-            target = go_to_path(self.reader, target)
+            try:
+                target = go_to_path(self.reader, target)
+            except PathFailure as p:
+                print(p.args[0])
+                target = None
         else:
             target = self._to_id(target)
         if target is None:
