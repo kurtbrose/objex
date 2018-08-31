@@ -82,6 +82,9 @@ CREATE TABLE reference (
     ref TEXT NOT NULL -- keys *might* be okay
 );
 
+-- these are unlikely to be used, but an empty table
+-- takes up very little space
+
 CREATE TABLE gc_referrer (
     src INTEGER NOT NULL,
     dst INTEGER NOT NULL
@@ -90,6 +93,12 @@ CREATE TABLE gc_referrer (
 CREATE TABLE gc_referent (
     src INTEGER NOT NULL,
     dst INTEGER NOT NULL
+);
+
+CREATE TABLE marked_objects (
+    id INTEGER PRIMARY KEY,
+    object INTEGER NOT NULL,
+    mark TEXT NOT NULL UNIQUE
 );
 '''
 
@@ -110,5 +119,10 @@ CREATE INDEX reference_all ON reference(src, dst, ref);
 CREATE INDEX function_object ON function(object);
 CREATE INDEX pyframe_object ON pyframe(object);
 CREATE INDEX pycode_object ON pycode(object);
+CREATE INDEX module_name ON module(name);
 CREATE INDEX module_object ON module(object);
+CREATE INDEX pytype_bases_all ON pytype_bases(obj_id, base_obj_id);
+CREATE INDEX marked_objects_all ON marked_objects(object, mark);
+CREATE INDEX gc_referrer_all ON gc_referrer(src, dst);
+CREATE INDEX gc_referent_all ON gc_referent(src, dst);
 '''
