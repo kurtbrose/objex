@@ -808,7 +808,7 @@ class Console(Cmd):
             if module_ref_paths:
                 print('%s modules transitively refer to %s:'
                       % (len(module_ref_paths), label))
-                for ref_path in module_ref_paths:
+                for ref_path in module_ref_paths[:20]:
                     self._print_option('go %s' % ref_path[0][0], self._ref_path(ref_path))
 
         if not self.reader.obj_is_frame(self.cur):
@@ -817,7 +817,7 @@ class Console(Cmd):
             if frame_ref_paths:
                 print('%s frames transitively refer to %s:'
                       % (len(frame_ref_paths), label))
-                for ref_path in frame_ref_paths:
+                for ref_path in frame_ref_paths[:20]:
                     self._print_option('go %s' % ref_path[0][0], self._ref_path(ref_path))
 
         print()
