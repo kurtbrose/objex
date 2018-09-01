@@ -315,7 +315,8 @@ class Reader(object):
                 nxt_dst_fringe = set()
                 for obj_id in dst_fringe:
                     parent_ids = self.sql_list(
-                        "SELECT src FROM reference WHERE dst = ? OR ref = '@' || ?", (obj_id, str(obj_id)))
+                        "SELECT src FROM reference WHERE (dst = ? OR ref = '@' || ?) AND NOT ref LIKE '%.f_globals%'",
+                        (obj_id, str(obj_id)))
                     for parent_id in parent_ids:
                         if parent_id in dst_child:
                             continue  # already found it earlier
@@ -327,7 +328,8 @@ class Reader(object):
                 nxt_src_fringe = set()
                 for obj_id in src_fringe:
                     child_ids = self.sql_list(
-                        'SELECT dst FROM reference WHERE src = ?', (obj_id,))
+                        "SELECT dst FROM reference WHERE src = ? AND NOT ref LIKE '%.f_globals%'",
+                        (obj_id,))  # TODO: capture ref here as well
                     for child_id in child_ids:
                         if child_id in src_parent:
                             continue  # already found it
@@ -960,6 +962,18 @@ class Console(Cmd):
         self.history = self.history[:self.history_idx] + [target]
 
         self.do_list()
+
+    ''' TODO: WHY WONT THIS WORK?
+    def complete_go(self, text, line, begidx, endidx):
+        line = line.strip()
+        if not line:
+            options = self.reader.sql_list(
+                "SELECT ref FROM reference WHERE src = ?", (self.cur,))
+        else:
+            options = ['iou real path thingie']
+        # filter to attribute-like things, and get rid of leading dot
+        return [e[1:] for e in options if e.startswith('.')] + ["HELLO"] + [str(len(options))]
+    '''
 
     def do_back(self, args):
         if self.history_idx == 0:
