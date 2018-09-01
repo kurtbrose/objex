@@ -966,17 +966,20 @@ class Console(Cmd):
 
         self.do_list()
 
-    ''' TODO: WHY WONT THIS WORK?
+    # TODO: WHY WONT THIS WORK?
     def complete_go(self, text, line, begidx, endidx):
-        line = line.strip()
+        cmd, _, line = line.partition(' ')
         if not line:
             options = self.reader.sql_list(
                 "SELECT ref FROM reference WHERE src = ?", (self.cur,))
-        else:
-            options = ['iou real path thingie']
+        elif line[0] == '.':
+            options = self.reader.sql_list(
+                "SELECT ref FROM reference WHERE src = ? and ref like ?", (self.cur, line + '%'))
         # filter to attribute-like things, and get rid of leading dot
-        return [e[1:] for e in options if e.startswith('.')] + ["HELLO"] + [str(len(options))]
-    '''
+        ret = [e[1:] for e in options if e.startswith('.')]
+        if len(ret) == 1:
+            ret = ['.' + ret[0]]
+        return ret
 
     def do_back(self, args):
         if self.history_idx == 0:
