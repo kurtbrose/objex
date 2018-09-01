@@ -59,3 +59,23 @@ Other:
   iterators, set iterators, etc. Luckily, like dictproxy they only
   hold onto one reference and it's the relevant container. Might be
   able to develop a heuristic around these kinds of types.
+
+## CLI
+
+* Subcommands (possibly separate commands once export/explore apps are separated)
+  * snapshot/capture
+  * explore
+
+* objex capture --path rel_file.db --delay 30 -- python_script.py args
+  * path defaults to <local dir>/objex-<script_name_slug>-<hostname>-<isodt>.db
+  * --use-gc defaults to false, needs a better name, more of a debug option
+  * --delay is the number of seconds to wait before capturing
+  * a --count might be easy to implement to do multiple dumps, gonna
+    have to parse and rewrite their path though if it's a custom one,
+    and the explorer doesn't support it.
+  * --min-size: don't capture unless/until the maxrss has crested this size
+* objex explore
+  * should autoimport (with message to that effect) if the database in
+    question doesn't have indices built, maybe a --auto flag to not
+    prompt.
+  * --with-graph also loads the data into a networkx digraph
