@@ -21,6 +21,7 @@ import threading
 import thread
 import time
 import collections
+import weakref
 
 
 def stacker(n=200):
@@ -71,6 +72,14 @@ e = E()
 dq = collections.deque([1, 2, 3])
 dd = collections.defaultdict(int)
 dd[1] = 'cat'
+
+r1 = weakref.ref(c)
+r2 = weakref.WeakKeyDictionary()
+r2[c] = 1
+r3 = weakref.WeakValueDictionary()
+r3[1] = c
+r4 = weakref.WeakSet()
+r4.add(c)
 
 # now that a bunch of balls are in the air, dump them to disk
 if os.path.exists('objex-test.db'):
