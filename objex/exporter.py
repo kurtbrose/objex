@@ -1,3 +1,4 @@
+import collections
 import gc
 import inspect
 import os
@@ -261,7 +262,7 @@ class _Writer(object):
             keys = obj.keys()
             key_dst += [('@{}'.format(self._ensure_db_id(key, refs=2)), dict.__getitem__(obj, key))
                         for key in keys]
-        elif extra_relationship in (list, tuple):
+        elif extra_relationship in (list, tuple, collections.deque):
             key_dst += enumerate(obj)
         elif extra_relationship in (set, frozenset):
             key_dst += zip(['*'] * len(obj), obj)
@@ -442,7 +443,7 @@ _SPECIAL_TYPES = set([
     types.GeneratorType, types.MethodType, types.UnboundMethodType,
     types.DictProxyType, classmethod, staticmethod, property,
     types.BuiltinFunctionType, types.BuiltinMethodType,
-    types.ModuleType])
+    types.ModuleType, collections.deque])
 
 
 def dump_graph(path, print_info=False, use_gc=False):

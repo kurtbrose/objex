@@ -20,6 +20,7 @@ f = closing(1)
 import threading
 import thread
 import time
+import collections
 
 
 def stacker(n=200):
@@ -66,6 +67,8 @@ class E(object):
     @classmethod
     def c(cls): pass
 e = E()
+
+dq = collections.deque([1, 2, 3])
 
 # now that a bunch of balls are in the air, dump them to disk
 if os.path.exists('objex-test.db'):
