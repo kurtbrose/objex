@@ -13,6 +13,7 @@ CREATE TABLE meta (
     hostname TEXT NOT NULL,
     memory_mb INTEGER NOT NULL,
     gc_info TEXT NOT NULL,
+    num_gcd_objects INTEGER NOT NULL,
     duration_s REAL
 );
 

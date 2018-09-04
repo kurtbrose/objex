@@ -34,15 +34,19 @@ def _get_memory_mb():
     return psutil.Process().memory_info()[0] / 1024.0 / 1024
 
 
-def _dict_rel(obj, ref):
-    '''extract the dict-relations between object obj and dict ref'''
-    src_keys = []
-    for item in ref.items():
-        if item[0] is obj:
-            src_keys.append((ref, '<key>'))
-        if item[1] is obj:
-            src_keys.append((ref, repr(item[0])))
-    return src_keys
+def _gc_prep():
+    '''
+    turn off GC, set flags so they will populate gc.garbage,
+    then run the collector
+    returns the number of objects collected
+    '''
+    gc.disable()
+    flags = gc.get_debug()
+    gc.set_debug(gc.DEBUG_UNCOLLECTABLE)  # make gc.garbage useful
+    num_collected = gc.collect()
+    gc.set_debug(flags)
+    gc.enable()
+    return num_collected
 
 
 class _Writer(object):
@@ -96,9 +100,13 @@ class _Writer(object):
             conn.execute("PRAGMA journal_mode = WAL")
         _run_ddl(conn, _SCHEMA)
         memory = _get_memory_mb()
+        num_collected = _gc_prep()
         conn.execute(
-            "INSERT INTO meta (id, pid, hostname, memory_mb, gc_info) VALUES (0, ?, ?, ?, ?)",
-            (os.getpid(), getfqdn(), memory, '[{},{},{}]'.format(*gc.get_count())))
+            """
+            INSERT INTO meta (id, pid, hostname, memory_mb, gc_info, num_gcd_objects)
+            VALUES (0, ?, ?, ?, ?, ?)
+            """,
+            (os.getpid(), getfqdn(), memory, '[{},{},{}]'.format(*gc.get_count()), num_collected))
         writer = cls(conn, use_gc=use_gc)
         writer.add_all()
         writer.finish()
