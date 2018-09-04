@@ -341,6 +341,11 @@ class _Writer(object):
         elif extra_relationship is types.ModuleType:
             key_dst.append(('.__doc__', obj.__doc__))
             check_dict = True
+        elif extra_relationship is collections.defaultdict:
+            keys = obj.keys()
+            key_dst += [('@{}'.format(self._ensure_db_id(key, refs=2)), dict.__getitem__(obj, key))
+                        for key in keys]
+            key_dst.append(('.default_factory', self._ensure_db_id(obj.default_factory)))
         if check_dict:
             if hasattr(obj, "__dict__"):
                 key_dst += [('.' + key, dst) for key, dst in obj.__dict__.items()]
@@ -443,7 +448,7 @@ _SPECIAL_TYPES = set([
     types.GeneratorType, types.MethodType, types.UnboundMethodType,
     types.DictProxyType, classmethod, staticmethod, property,
     types.BuiltinFunctionType, types.BuiltinMethodType,
-    types.ModuleType, collections.deque])
+    types.ModuleType, collections.deque, collections.defaultdict])
 
 
 def dump_graph(path, print_info=False, use_gc=False):

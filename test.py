@@ -69,6 +69,8 @@ class E(object):
 e = E()
 
 dq = collections.deque([1, 2, 3])
+dd = collections.defaultdict(int)
+dd[1] = 'cat'
 
 # now that a bunch of balls are in the air, dump them to disk
 if os.path.exists('objex-test.db'):
