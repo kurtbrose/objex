@@ -894,7 +894,11 @@ class Console(Cmd):
     def do_out(self, args):
         "View outbound references of the current object"
         res = []
-        out_ref = self.reader.obj_refers_to(self.cur)
+        if self.reader.obj_is_module(self.cur):
+            limit = 200
+        else:
+            limit = 20
+        out_ref = self.reader.obj_refers_to(self.cur, limit=limit)
         if args:
             return res  # TODO (go to a specific one)
 
