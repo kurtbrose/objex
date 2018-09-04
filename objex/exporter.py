@@ -135,7 +135,10 @@ class _Writer(object):
         # this is a quick idiom for assigning integers to objects
         # e.g. first thing in object_id_map gets assigned 0, second -> 1, etc...
         obj_id = self.object_id_map[id(obj)] = len(self.object_id_map)
-        type_obj_id = self._ensure_db_id(type(obj), is_type=True)
+        obj_type = type(obj)
+        if obj_type is types.InstanceType:
+            obj_type = obj.__class__
+        type_obj_id = self._ensure_db_id(obj_type, is_type=True, refs=1)
         try:  # very hard to forward detect if this will works
             length = len(obj)
         except Exception:
