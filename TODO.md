@@ -1,5 +1,27 @@
 # objex TODO
 
+## ROADMAP
+
+Extensions
+- collections.deque, collections.defaultdict
+- frame, func, code etc
+- old style classes?
+
+Tests
+- CI
+- "close the loop" on dump -- check that DB was written CORRECTLY not just that it didn't crash
+
+Py3 Support
+- briefly worked, atrophied w/out tests
+- old-style classes
+
+CLI
+- better commands / sub-commands / flags /etc (face interface?)
+- help
+
+Library Meta-Data in dump
+- detect version mismatch between export and exploration
+
 ## Extra export data
 
 - Truncated repr for user classes and strings (dicts, lists, etc. can be reconstructed already)
