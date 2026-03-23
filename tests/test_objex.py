@@ -262,3 +262,17 @@ class ObjexTests(unittest.TestCase):
         referents_payload = json.loads(body)
         self.assertIn('count', referents_payload)
         self.assertIn('items', referents_payload)
+
+        status_code, _, body = dispatch_request(
+            str(analysis_path), '/api/path-to-module?id={}&limit=5'.format(random_payload['id'])
+        )
+        self.assertEqual(status_code, 200)
+        module_paths_payload = json.loads(body)
+        self.assertIn('items', module_paths_payload)
+
+        status_code, _, body = dispatch_request(
+            str(analysis_path), '/api/path-to-frame?id={}&limit=5'.format(random_payload['id'])
+        )
+        self.assertEqual(status_code, 200)
+        frame_paths_payload = json.loads(body)
+        self.assertIn('items', frame_paths_payload)

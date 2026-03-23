@@ -741,6 +741,27 @@ class Reader:
     def resolve_path(self, path):
         return go_to_path(self, path)
 
+    def object_ref_path_data(self, path):
+        items = []
+        for obj_id, ref in path:
+            items.append({
+                'object': self.object_summary(obj_id),
+                'ref': ref,
+            })
+        return items
+
+    def path_to_module_data(self, obj_id, limit=20):
+        return [
+            self.object_ref_path_data(path)
+            for path in self.find_path_to_module(obj_id)[:limit]
+        ]
+
+    def path_to_frame_data(self, obj_id, limit=20):
+        return [
+            self.object_ref_path_data(path)
+            for path in self.find_path_to_frame(obj_id)[:limit]
+        ]
+
 
 class PathFailure(Exception): pass
 

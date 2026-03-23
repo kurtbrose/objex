@@ -28,6 +28,7 @@ INDEX_HTML = """<!doctype html>
     <section id="outbound-panel" class="panel"></section>
     <section id="inbound-panel" class="panel"></section>
   </main>
+  <section id="paths-panel" class="panel"></section>
   <section id="search-results" class="panel search-results"></section>
   <script src="/app.js"></script>
 </body>
@@ -105,6 +106,31 @@ function renderSearchResults(items) {
   `;
 }
 
+function renderPathGroup(title, items) {
+  if (!items.length) {
+    return `<div class="path-group"><h3>${title}</h3><div class="empty">No paths found</div></div>`;
+  }
+  const rendered = items.map(path => `
+    <li class="path-row">
+      ${path.map(step => `${objectLink(step.object)} <span class="edge">${escapeHtml(step.ref)}</span>`).join('')}
+    </li>
+  `).join('');
+  return `
+    <div class="path-group">
+      <h3>${title} (${items.length})</h3>
+      <ul class="refs">${rendered}</ul>
+    </div>
+  `;
+}
+
+function renderPaths(modulePaths, framePaths) {
+  document.getElementById('paths-panel').innerHTML = `
+    <h2>Root Paths</h2>
+    ${renderPathGroup('Module Paths', modulePaths.items)}
+    ${renderPathGroup('Frame Paths', framePaths.items)}
+  `;
+}
+
 function setMessage(message) {
   document.getElementById('message').textContent = message || '';
 }
@@ -112,15 +138,18 @@ function setMessage(message) {
 async function loadObject(id, pushState = true) {
   try {
     setMessage('');
-    const [obj, referents, referrers] = await Promise.all([
+    const [obj, referents, referrers, modulePaths, framePaths] = await Promise.all([
       fetchJson(`/api/object?id=${encodeURIComponent(id)}`),
       fetchJson(`/api/referents?id=${encodeURIComponent(id)}&limit=100`),
-      fetchJson(`/api/referrers?id=${encodeURIComponent(id)}&limit=100`)
+      fetchJson(`/api/referrers?id=${encodeURIComponent(id)}&limit=100`),
+      fetchJson(`/api/path-to-module?id=${encodeURIComponent(id)}&limit=10`),
+      fetchJson(`/api/path-to-frame?id=${encodeURIComponent(id)}&limit=10`)
     ]);
     state.currentObjectId = obj.id;
     renderObjectPanel(obj);
     renderRefs('outbound-panel', 'Outbound References', referents);
     renderRefs('inbound-panel', 'Inbound References', referrers);
+    renderPaths(modulePaths, framePaths);
     if (pushState) {
       history.pushState({ id: obj.id }, '', `/?id=${obj.id}`);
     }
@@ -267,6 +296,11 @@ STYLES_CSS = """body {
   margin-bottom: 0.75rem;
 }
 .empty { color: #6b7280; }
+.path-group + .path-group { margin-top: 1rem; }
+.path-row {
+  line-height: 1.8;
+  word-break: break-word;
+}
 @media (max-width: 980px) {
   .layout { grid-template-columns: 1fr; }
   .topbar { flex-wrap: wrap; }
@@ -317,6 +351,20 @@ def dispatch_request(db_path, path):
                 query_text = _required_param(query, 'q')
                 return 200, 'application/json; charset=utf-8', _json_bytes(
                     {'items': reader.type_search_data(query_text, limit=_int_param(query, 'limit', 20))}
+                )
+            if parsed.path == '/api/path-to-module':
+                return 200, 'application/json; charset=utf-8', _json_bytes(
+                    {'items': reader.path_to_module_data(
+                        _required_int(query, 'id'),
+                        limit=_int_param(query, 'limit', 20),
+                    )}
+                )
+            if parsed.path == '/api/path-to-frame':
+                return 200, 'application/json; charset=utf-8', _json_bytes(
+                    {'items': reader.path_to_frame_data(
+                        _required_int(query, 'id'),
+                        limit=_int_param(query, 'limit', 20),
+                    )}
                 )
             if parsed.path == '/api/go':
                 try:
