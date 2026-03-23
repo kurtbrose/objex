@@ -762,6 +762,29 @@ class Reader:
             for path in self.find_path_to_frame(obj_id)[:limit]
         ]
 
+    def top_types_data(self, limit=20):
+        return [
+            {
+                'name': name,
+                'instance_count': instance_count,
+                'memory_percent': memory_percent,
+                'type_id': self.sql_val(
+                    'SELECT object FROM pytype WHERE name = ? LIMIT 1',
+                    (name,),
+                ),
+            }
+            for name, instance_count, memory_percent in self.cost_by_type(limit=limit)
+        ]
+
+    def largest_objects_data(self, limit=20):
+        return [
+            {
+                'size': size,
+                'object': self.object_summary(obj_id),
+            }
+            for size, obj_id in self.largest_objects(limit=limit)
+        ]
+
 
 class PathFailure(Exception): pass
 

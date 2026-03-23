@@ -244,6 +244,18 @@ class ObjexTests(unittest.TestCase):
         self.assertIn('hostname', summary)
         self.assertGreater(summary['object_count'], 0)
 
+        status_code, _, body = dispatch_request(str(analysis_path), '/api/top-types?limit=5')
+        self.assertEqual(status_code, 200)
+        top_types_payload = json.loads(body)
+        self.assertIn('items', top_types_payload)
+        self.assertTrue(top_types_payload['items'])
+
+        status_code, _, body = dispatch_request(str(analysis_path), '/api/largest-objects?limit=5')
+        self.assertEqual(status_code, 200)
+        largest_objects_payload = json.loads(body)
+        self.assertIn('items', largest_objects_payload)
+        self.assertTrue(largest_objects_payload['items'])
+
         status_code, _, body = dispatch_request(str(analysis_path), '/api/random')
         self.assertEqual(status_code, 200)
         random_payload = json.loads(body)

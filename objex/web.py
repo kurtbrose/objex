@@ -23,6 +23,7 @@ INDEX_HTML = """<!doctype html>
   </header>
   <section id="summary" class="summary"></section>
   <section id="message" class="message"></section>
+  <section id="discovery-panel" class="panel"></section>
   <main class="layout">
     <aside id="object-panel" class="panel"></aside>
     <section id="outbound-panel" class="panel"></section>
@@ -61,6 +62,26 @@ function renderSummary(summary) {
     <div>${escapeHtml(summary.hostname)} at ${escapeHtml(summary.timestamp)}</div>
     <div>${summary.object_count.toLocaleString()} objects, ${summary.reference_count.toLocaleString()} references</div>
     <div>${summary.memory_mb.toFixed(1)} MiB RSS, ${(summary.visible_memory_fraction * 100).toFixed(1)}% visible</div>
+  `;
+}
+
+function renderDiscovery(topTypes, largestObjects) {
+  document.getElementById('discovery-panel').innerHTML = `
+    <h2>Discovery</h2>
+    <div class="discovery-grid">
+      <div>
+        <h3>Top Types</h3>
+        <ul class="refs">
+          ${topTypes.items.map(item => `<li>${objectLink({id: item.type_id, label: `<type ${item.name}#${item.type_id}>`})} <span class="type">${item.instance_count.toLocaleString()} instances</span> <span class="edge">${item.memory_percent.toFixed(1)}%</span></li>`).join('')}
+        </ul>
+      </div>
+      <div>
+        <h3>Largest Objects</h3>
+        <ul class="refs">
+          ${largestObjects.items.map(item => `<li>${objectLink(item.object)} <span class="type">${escapeHtml(item.object.typequalname)}</span> <span class="edge">${item.size} bytes</span></li>`).join('')}
+        </ul>
+      </div>
+    </div>
   `;
 }
 
@@ -159,8 +180,13 @@ async function loadObject(id, pushState = true) {
 }
 
 async function init() {
-  const summary = await fetchJson('/api/summary');
+  const [summary, topTypes, largestObjects] = await Promise.all([
+    fetchJson('/api/summary'),
+    fetchJson('/api/top-types?limit=12'),
+    fetchJson('/api/largest-objects?limit=12')
+  ]);
   renderSummary(summary);
+  renderDiscovery(topTypes, largestObjects);
 
   const params = new URLSearchParams(window.location.search);
   const id = params.get('id');
@@ -266,6 +292,11 @@ STYLES_CSS = """body {
   grid-template-columns: 1fr 1.5fr 1.5fr;
   gap: 0;
 }
+.discovery-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
 .refs {
   list-style: none;
   padding: 0;
@@ -303,6 +334,7 @@ STYLES_CSS = """body {
 }
 @media (max-width: 980px) {
   .layout { grid-template-columns: 1fr; }
+  .discovery-grid { grid-template-columns: 1fr; }
   .topbar { flex-wrap: wrap; }
   .topbar input { min-width: 10rem; }
 }
@@ -351,6 +383,14 @@ def dispatch_request(db_path, path):
                 query_text = _required_param(query, 'q')
                 return 200, 'application/json; charset=utf-8', _json_bytes(
                     {'items': reader.type_search_data(query_text, limit=_int_param(query, 'limit', 20))}
+                )
+            if parsed.path == '/api/top-types':
+                return 200, 'application/json; charset=utf-8', _json_bytes(
+                    {'items': reader.top_types_data(limit=_int_param(query, 'limit', 20))}
+                )
+            if parsed.path == '/api/largest-objects':
+                return 200, 'application/json; charset=utf-8', _json_bytes(
+                    {'items': reader.largest_objects_data(limit=_int_param(query, 'limit', 20))}
                 )
             if parsed.path == '/api/path-to-module':
                 return 200, 'application/json; charset=utf-8', _json_bytes(
