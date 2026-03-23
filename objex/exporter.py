@@ -120,20 +120,24 @@ class _Writer:
         '''create a new instance that will dump state to path (which shouldn't exist)'''
         conn = sqlite3.connect(path)
         conn.text_factory = str
-        if use_wal:
-            conn.execute("PRAGMA journal_mode = WAL")
-        _run_ddl(conn, _SCHEMA)
-        memory = _get_memory_mb()
-        num_collected = _gc_prep()
-        conn.execute(
-            """
-            INSERT INTO meta (id, pid, hostname, memory_mb, gc_info, num_gcd_objects)
-            VALUES (0, ?, ?, ?, ?, ?)
-            """,
-            (os.getpid(), getfqdn(), memory, '[{},{},{}]'.format(*gc.get_count()), num_collected))
-        writer = cls(conn, use_gc=use_gc)
-        writer.add_all()
-        writer.finish()
+        try:
+            if use_wal:
+                conn.execute("PRAGMA journal_mode = WAL")
+            _run_ddl(conn, _SCHEMA)
+            memory = _get_memory_mb()
+            num_collected = _gc_prep()
+            conn.execute(
+                """
+                INSERT INTO meta (id, pid, hostname, memory_mb, gc_info, num_gcd_objects)
+                VALUES (0, ?, ?, ?, ?, ?)
+                """,
+                (os.getpid(), getfqdn(), memory, '[{},{},{}]'.format(*gc.get_count()), num_collected))
+            writer = cls(conn, use_gc=use_gc)
+            writer.add_all()
+            writer.finish()
+        except Exception:
+            conn.close()
+            raise
 
     def execute(self, sql, params):
         # start = time.time()
@@ -209,9 +213,10 @@ class _Writer:
             return
         obj_t_id = t_id_map[id(obj)] = len(t_id_map)
         if type(obj) is types.ModuleType:
+            module_file = getattr(obj, "__file__", None) or "(none)"
             self.execute(
                 "INSERT INTO module (id, object, file, name) VALUES (?, ?, ?, ?)",
-                (obj_t_id, obj_id, getattr(obj, "__file__", "(none)"), obj.__name__))
+                (obj_t_id, obj_id, module_file, obj.__name__))
         elif type(obj) is types.FrameType:
             if obj.f_back:
                 f_back_obj_id = self._ensure_db_id(obj.f_back)

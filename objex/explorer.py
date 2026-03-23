@@ -115,9 +115,14 @@ class Reader:
     '''read a graph dumped previously'''
     def __init__(self, path):
         self.path = path
-        self.conn = sqlite3.connect(path)
-        self.conn.text_factory = str
-        _validate_objex_db(self.conn, path)
+        conn = sqlite3.connect(path)
+        conn.text_factory = str
+        try:
+            _validate_objex_db(conn, path)
+        except Exception:
+            conn.close()
+            raise
+        self.conn = conn
 
     def close(self):
         self.conn.close()
