@@ -1,6 +1,7 @@
 import collections
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -56,6 +57,17 @@ class ExplodingGetattr:
         raise AttributeError(name)
 
 
+class MisdirectingGetattribute:
+    def __init__(self):
+        self.value = 1
+        self._pattern = re.compile('x')
+
+    def __getattribute__(self, name):
+        if name == '__dict__':
+            return getattr(object.__getattribute__(self, '_pattern'), name)
+        return object.__getattribute__(self, name)
+
+
 def closing(a, b=1):
     c = 2
 
@@ -105,6 +117,7 @@ class ObjexTests(unittest.TestCase):
         closure = closing(1)
         empty_closure = make_empty_closure()
         exploding_getattr = ExplodingGetattr()
+        misdirecting_getattribute = MisdirectingGetattribute()
         bound_method = StaticAndClassMethods().class_method
         generator = (item for item in range(2))
 
@@ -119,6 +132,7 @@ class ObjexTests(unittest.TestCase):
             'closure': closure,
             'empty_closure': empty_closure,
             'exploding_getattr': exploding_getattr,
+            'misdirecting_getattribute': misdirecting_getattribute,
             'bound_method': bound_method,
             'generator': generator,
             'weak_set': weak_set,
@@ -235,6 +249,14 @@ class ObjexTests(unittest.TestCase):
 
         with Reader(str(dump_path)) as reader:
             assert reader.find_type_by_name('ExplodingGetattr')
+
+    def test_dump_graph_uses_resolved_dunder_dict_without_reaccess(self):
+        dump_path = Path(self.temp_dir.name) / 'misdirecting-getattribute.db'
+
+        dump_graph(str(dump_path), use_gc=False)
+
+        with Reader(str(dump_path)) as reader:
+            assert reader.find_type_by_name('MisdirectingGetattribute')
 
     @unittest.skipUnless(hasattr(os, 'fork'), 'requires os.fork')
     def test_spawn_dump_and_wait_dump(self):

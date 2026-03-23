@@ -406,7 +406,7 @@ class _Writer:
             except AttributeError:
                 __dict__ = None
             if __dict__ is not None:
-                key_dst += [('.' + key, dst) for key, dst in obj.__dict__.items()]
+                key_dst += [('.' + key, dst) for key, dst in __dict__.items()]
                 if type(__dict__) is _DICT_PROXY_TYPE:
                     key_dst.append(('.__dict__<proxy>', __dict__))
                     key_dst.append(('.__dict__', gc.get_referents(__dict__)[0]))
