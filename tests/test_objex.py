@@ -182,3 +182,23 @@ class ObjexTests(unittest.TestCase):
         self.assertIn('make-analysis-db', result.stdout)
         self.assertIn('explore', result.stdout)
         self.assertNotIn('WELCOME TO OBJEX EXPLORER', result.stdout)
+
+    def test_module_cli_parser_supports_legacy_explore_and_analysis_command(self):
+        result = subprocess.run(
+            [sys.executable, '-m', 'objex', 'make-analysis-db', '--help'],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=Path(__file__).resolve().parents[1],
+        )
+        self.assertIn('collection_db', result.stdout)
+        self.assertIn('analysis_db', result.stdout)
+
+        result = subprocess.run(
+            [sys.executable, '-m', 'objex', 'explore', '--help'],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=Path(__file__).resolve().parents[1],
+        )
+        self.assertIn('analysis_db', result.stdout)

@@ -23,16 +23,18 @@ def build_parser():
     )
     make_analysis_parser.add_argument('collection_db', help='Path to the collected objex dump database.')
     make_analysis_parser.add_argument('analysis_db', help='Path to write the analysis database.')
-
-    parser.add_argument(
-        'analysis_db',
-        nargs='?',
-        help=argparse.SUPPRESS,
-    )
     return parser
 
 
 def main(argv=None):
+    if argv is None:
+        import sys
+
+        argv = sys.argv[1:]
+
+    if argv and argv[0] not in {'explore', 'make-analysis-db', '-h', '--help'}:
+        argv = ['explore'] + argv
+
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -40,14 +42,10 @@ def main(argv=None):
         explorer.make_analysis_db(args.collection_db, args.analysis_db)
         return 0
 
-    analysis_db = None
-    if args.command == 'explore':
-        analysis_db = args.analysis_db
-    elif args.analysis_db:
-        analysis_db = args.analysis_db
-    else:
+    if args.command != 'explore':
         parser.print_help()
         return 0
+    analysis_db = args.analysis_db
 
     try:
         explorer.Console(explorer.Reader(analysis_db)).run()
