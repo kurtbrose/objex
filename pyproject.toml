@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "objex"
+version = "0.15.dev0"
+description = "object structure exporter"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "BSD"}
+authors = [
+  {name = "Kurt Rose", email = "kurt@kurtrose.com"},
+]
+dependencies = [
+]
+classifiers = [
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+
+[project.urls]
+Homepage = "https://github.com/kurtbrose/objex"
+
+[tool.setuptools]
+packages = ["objex"]

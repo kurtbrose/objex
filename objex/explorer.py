@@ -7,7 +7,6 @@ from cmd import Cmd
 import pprint
 import random
 import re
-import shutil
 import sqlite3
 try:
     import colorama
@@ -19,6 +18,12 @@ try:
     from termcolor import colored
 except ImportError:
     colored = lambda s, color: s
+
+
+try:
+    _INTEGER_TYPES = (int, long)
+except NameError:
+    _INTEGER_TYPES = (int,)
 
 
 from .schema import _INDICES
@@ -53,11 +58,18 @@ def make_analysis_db(collection_db_path, analysis_db_path):
     if os.path.exists(analysis_db_path):
         raise EnvironmentError(
             "analysis DB already exists at {}".format(analysis_db_path))
-    shutil.copyfile(collection_db_path, analysis_db_path)
+    source_conn = sqlite3.connect(collection_db_path)
+    source_conn.text_factory = str
     conn = sqlite3.connect(analysis_db_path)
     conn.text_factory = str
-    _run_ddl(conn, _INDICES)
-    _add_class_references(conn)
+    try:
+        source_conn.backup(conn)
+        _run_ddl(conn, _INDICES)
+        _add_class_references(conn)
+        conn.commit()
+    finally:
+        conn.close()
+        source_conn.close()
 
 
 _MISSING = object()
@@ -138,7 +150,7 @@ class Reader(object):
         mod_name = self.modulename(mod_obj_id)
         if not mod_name:
             mod_name = '(unknown_module#%s)' % mod_obj_id
-        elif mod_name == '__builtin__':
+        elif mod_name in ('__builtin__', 'builtins'):
             return name
         return '%s.%s' % (mod_name, name)
 
@@ -186,7 +198,7 @@ class Reader(object):
         mod_name = self.modulename(mod_obj_id)
         if not mod_name:
             mod_name = '(unknown_module#%s)' % mod_obj_id
-        elif mod_name == '__builtin__':
+        elif mod_name in ('__builtin__', 'builtins'):
             return name
         return '%s.%s' % (mod_name, name)
 
@@ -296,7 +308,7 @@ class Reader(object):
         '''
         # {obj_id: parent} "towards" the sources
         for src_obj_id in src_obj_ids:
-            assert type(src_obj_id) in (int, long), ("not an object id", src_obj_id)
+            assert isinstance(src_obj_id, _INTEGER_TYPES), ("not an object id", src_obj_id)
         src_parent = {obj_id: None for obj_id in src_obj_ids}
         src_fringe = set(src_parent)  # "fringe" meaning the "surface", nodes that touch exterior nodes
         # {obj_id: child} "towards" the destination
@@ -617,7 +629,7 @@ def go_to_path(reader, path):
         rest = rest[1:]  # get rid of leading '.'
         sofar = []
     else:
-        for i in [0] + range(path.count('.')):
+        for i in [0] + list(range(path.count('.'))):
             modulename = path.rsplit('.', i + 1)[0]
             start = reader.sql_val(
                 "SELECT object FROM module WHERE name = ?", (modulename,), default=None)

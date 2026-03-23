@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import collections
 import gc
 import inspect
@@ -13,10 +15,12 @@ import sqlite3
 import time
 import types
 
-from boltons.tbutils import Callpoint
-
 from .schema import _SCHEMA
 from .dbutils import _run_ddl
+
+
+_DICT_PROXY_TYPE = getattr(types, 'DictProxyType', type(type.__dict__))
+_UNBOUND_METHOD_TYPE = getattr(types, 'UnboundMethodType', types.MethodType)
 
 # MAINTENANCE NOTE: why are some python types "special" and get broken out as
 # their own table type whereas others are not?
@@ -47,6 +51,19 @@ def _gc_prep():
     gc.set_debug(flags)
     gc.enable()
     return num_collected
+
+
+def _format_frame_trace(frame):
+    frameinfo = inspect.getframeinfo(frame)
+    context = ''
+    if frameinfo.code_context:
+        context = frameinfo.code_context[0].strip()
+    return '  File "{}", line {}, in {}\n    {}\n'.format(
+        frameinfo.filename,
+        frameinfo.lineno,
+        frameinfo.function,
+        context,
+    )
 
 
 class _Writer(object):
@@ -82,7 +99,8 @@ class _Writer(object):
         self.started = time.time()
         # ignore ids not just to avoid analysis noise, but because these can
         # get pretty big over time, don't want to waste DB space
-        self.ignore_ids = {id(e) for e in self.__dict__.values() + self.tracked_t_id_map.values()}
+        ignored = list(self.__dict__.values()) + list(self.tracked_t_id_map.values())
+        self.ignore_ids = {id(e) for e in ignored}
         self.ignore_ids.add(id(self.ignore_ids))
         self.ignore_ids.add(id(self.__dict__))
         self.ignore_ids.add(id(self))
@@ -136,7 +154,7 @@ class _Writer(object):
         # e.g. first thing in object_id_map gets assigned 0, second -> 1, etc...
         obj_id = self.object_id_map[id(obj)] = len(self.object_id_map)
         obj_type = type(obj)
-        if obj_type is types.InstanceType:
+        if getattr(types, 'InstanceType', None) is not None and obj_type is types.InstanceType:
             obj_type = getattr(obj, "__class__", obj_type)
         type_obj_id = self._ensure_db_id(obj_type, is_type=True, refs=1)
         try:  # very hard to forward detect if this will works
@@ -205,7 +223,7 @@ class _Writer(object):
                     self._ensure_db_id(obj.f_code),
                     obj.f_lasti,
                     obj.f_lineno,
-                    Callpoint.from_frame(obj).tb_frame_str(),
+                    _format_frame_trace(obj),
                 )
             )
         elif type(obj) is types.CodeType:
@@ -219,8 +237,8 @@ class _Writer(object):
                 (
                     obj_t_id,
                     obj_id,
-                    obj.func_name,
-                    self._ensure_db_id(obj.func_code),
+                    obj.__name__,
+                    self._ensure_db_id(obj.__code__),
                     self._module_name2obj_id(obj.__module__)
                 )
             )
@@ -301,17 +319,20 @@ class _Writer(object):
             >>> b().func_closure[0].cell_contents
             2
             '''
-            if obj.func_closure:  # (maybe) grab function closure
-                for varname, cell in zip(obj.func_code.co_freevars, obj.func_closure):
+            closure = getattr(obj, '__closure__', None)
+            code = obj.__code__
+            if closure:  # (maybe) grab function closure
+                for varname, cell in zip(code.co_freevars, closure):
                     key_dst.append((".locals[{!r}]".format(varname), cell.cell_contents))
-                key_dst.append(('.func_closure', obj.func_closure))
-            args, varargs, keywords, defaults = inspect.getargspec(obj)
+                key_dst.append(('.__closure__', closure))
+            argspec = inspect.getfullargspec(obj)
+            defaults = argspec.defaults
             if defaults:  # (maybe) grab function defaults
-                for name, default in zip(reversed(args), reversed(defaults)):
+                for name, default in zip(reversed(argspec.args), reversed(defaults)):
                     key_dst.append((".defaults[{!r}]".format(name), default))
-                key_dst.append(('.func_defaults', obj.func_defaults))
-            key_dst.append((".func_code", obj.func_code))
-            key_dst.append((".func_globals", obj.func_globals))
+                key_dst.append(('.__defaults__', obj.__defaults__))
+            key_dst.append((".__code__", code))
+            key_dst.append((".__globals__", obj.__globals__))
             key_dst.append((".__doc__", obj.__doc__))
             # __module__ is a special case b/c unlike other dst values, we don't
             # want to call _ensure_db_id on the module; so it gets its own insert
@@ -324,12 +345,11 @@ class _Writer(object):
         elif extra_relationship is types.GeneratorType:
             key_dst.append(('.gi_code', obj.gi_code))
             key_dst.append(('.gi_frame', obj.gi_frame))
-        elif extra_relationship in (types.MethodType, types.UnboundMethodType):
+        elif extra_relationship in (types.MethodType, _UNBOUND_METHOD_TYPE):
             key_dst += [
-                ('im_class', obj.im_class),
-                ('im_func', obj.im_func),
-                ('im_self', obj.im_self),
-                ('__doc__', obj.__doc__),
+                ('.__func__', obj.__func__),
+                ('.__self__', obj.__self__),
+                ('.__doc__', obj.__doc__),
             ]
         elif extra_relationship is types.BuiltinMethodType:
             try:
@@ -347,7 +367,7 @@ class _Writer(object):
                 ('.fdel', obj.fdel),
                 ('.__doc__', obj.__doc__),
             ]
-        elif extra_relationship is types.DictProxyType:
+        elif extra_relationship is _DICT_PROXY_TYPE:
             key_dst.append(('.<proxied_dict>', gc.get_referents(obj)[0]))
         elif extra_relationship is types.ModuleType:
             key_dst.append(('.__doc__', obj.__doc__))
@@ -356,12 +376,12 @@ class _Writer(object):
             keys = obj.keys()
             key_dst += [('@{}'.format(self._ensure_db_id(key, refs=2)), dict.__getitem__(obj, key))
                         for key in keys]
-            key_dst.append(('.default_factory', self._ensure_db_id(obj.default_factory)))
+            key_dst.append(('.default_factory', obj.default_factory))
         if check_dict:
             if hasattr(obj, "__dict__"):
                 key_dst += [('.' + key, dst) for key, dst in obj.__dict__.items()]
                 __dict__ = obj.__dict__
-                if type(__dict__) is types.DictProxyType:
+                if type(__dict__) is _DICT_PROXY_TYPE:
                     key_dst.append(('.__dict__<proxy>', __dict__))
                     key_dst.append(('.__dict__', gc.get_referents(__dict__)[0]))
                 else:
@@ -456,8 +476,8 @@ class _Writer(object):
 # special types that have special-handling code for discovering contents
 _SPECIAL_TYPES = set([
     dict, list, tuple, set, frozenset, types.FrameType, types.FunctionType,
-    types.GeneratorType, types.MethodType, types.UnboundMethodType,
-    types.DictProxyType, classmethod, staticmethod, property,
+    types.GeneratorType, types.MethodType, _UNBOUND_METHOD_TYPE,
+    _DICT_PROXY_TYPE, classmethod, staticmethod, property,
     types.BuiltinFunctionType, types.BuiltinMethodType,
     types.ModuleType, collections.deque, collections.defaultdict])
 
@@ -477,8 +497,8 @@ def dump_graph(path, print_info=False, use_gc=False):
         memory = _get_memory_mb()
         dumpsize = os.stat(path).st_size / 1024.0 / 1024  # MiB
         objects = len(gc.get_objects())
-        print "process memory usage: {:0.3f}MiB".format(memory)
-        print "total gc objects:", objects
+        print("process memory usage: {:0.3f}MiB".format(memory))
+        print("total gc objects:", objects)
         # print "wrote {} rows in {}".format(
         #     len(grapher.times), duration)
         # print "db perf: {:0.3f}us/row".format(
@@ -486,9 +506,9 @@ def dump_graph(path, print_info=False, use_gc=False):
         # print "overall perf: {:0.3f} s/GiB, {:0.03f} ms/object".format(
         #     1024 * duration / memory, 1000 * duration / objects)
         # print "duration - db time:", duration - sum(grapher.times)
-        print "duration: {0:0.1f}".format(duration)
-        print "compression - {:0.02f}MiB -> {:0.02f}MiB ({:0.01f}%)".format(
-            memory, dumpsize, 100 * (1 - dumpsize / memory))
+        print("duration: {0:0.1f}".format(duration))
+        print("compression - {:0.02f}MiB -> {:0.02f}MiB ({:0.01f}%)".format(
+            memory, dumpsize, 100 * (1 - dumpsize / memory)))
 
     return
 

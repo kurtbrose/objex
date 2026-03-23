@@ -1,0 +1,168 @@
+import collections
+import sqlite3
+import tempfile
+import threading
+import time
+import unittest
+import weakref
+from pathlib import Path
+
+from objex import Reader, dump_graph, make_analysis_db
+
+
+class LegacyA:
+    pass
+
+
+class SlotsA:
+    __slots__ = ('a', '__weakref__')
+
+
+class SlotsB(SlotsA):
+    __slots__ = ('b',)
+
+
+class SlotsC(SlotsB):
+    pass
+
+
+class StaticAndClassMethods:
+    @staticmethod
+    def static_method():
+        return 1
+
+    @classmethod
+    def class_method(cls):
+        return cls.__name__
+
+
+class NoneModule:
+    pass
+
+
+NoneModule.__module__ = None
+
+
+def closing(a, b=1):
+    c = 2
+
+    def has_closure(d):
+        return a + b + c + d
+
+    return has_closure
+
+
+class ObjexTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.stop_event = threading.Event()
+        self.started = threading.Event()
+        self._sample_objects = self._make_sample_objects()
+        self.thread = threading.Thread(target=self._stacker, daemon=True)
+        self.thread.start()
+        self.assertTrue(self.started.wait(timeout=2))
+
+    def tearDown(self):
+        self.stop_event.set()
+        self.thread.join(timeout=2)
+        self.temp_dir.cleanup()
+
+    def _make_sample_objects(self):
+        legacy_a = LegacyA()
+
+        slots_c = SlotsC()
+        slots_c.a = 'slot-a'
+        slots_c.b = 'slot-b'
+        slots_c.c = 'normal-attr'
+
+        deque_obj = collections.deque([1, 2, 3])
+        defaultdict_obj = collections.defaultdict(int)
+        defaultdict_obj[1] = 'cat'
+
+        closure = closing(1)
+        bound_method = StaticAndClassMethods().class_method
+        generator = (item for item in range(2))
+
+        weak_set = weakref.WeakSet()
+        weak_set.add(slots_c)
+
+        return {
+            'legacy_a': legacy_a,
+            'slots_c': slots_c,
+            'deque_obj': deque_obj,
+            'defaultdict_obj': defaultdict_obj,
+            'closure': closure,
+            'bound_method': bound_method,
+            'generator': generator,
+            'weak_set': weak_set,
+        }
+
+    def _stacker(self, n=25):
+        if n:
+            return self._stacker(n - 1)
+        self.started.set()
+        while not self.stop_event.wait(0.01):
+            time.sleep(0.01)
+
+    def test_dump_graph_and_make_analysis_db(self):
+        base_path = Path(self.temp_dir.name)
+
+        for use_gc in (False, True):
+            with self.subTest(use_gc=use_gc):
+                dump_path = base_path / ('objex-test-gc.db' if use_gc else 'objex-test.db')
+                analysis_path = base_path / ('objex-test-gc-analysis.db' if use_gc else 'objex-test-analysis.db')
+
+                dump_graph(str(dump_path), use_gc=use_gc)
+                make_analysis_db(str(dump_path), str(analysis_path))
+
+                reader = Reader(str(analysis_path))
+                self.addCleanup(reader.conn.close)
+
+                self.assertTrue(dump_path.exists())
+                self.assertTrue(analysis_path.exists())
+                self.assertGreater(reader.object_count(), 0)
+                self.assertGreater(reader.reference_count(), 0)
+                self.assertGreater(reader.visible_memory_fraction(), 0)
+                self.assertLessEqual(reader.visible_memory_fraction(), 1.5)
+
+                modules = reader.get_modules()
+                self.assertIn('builtins', modules)
+
+                legacy_type_ids = reader.find_type_by_name('LegacyA')
+                self.assertTrue(legacy_type_ids)
+                legacy_type_id = legacy_type_ids[0]
+                self.assertTrue(reader.typequalname(legacy_type_id).endswith('LegacyA'))
+                self.assertGreaterEqual(reader.obj_instance_count(legacy_type_id), 1)
+
+                instances = reader.random_instances(legacy_type_id, limit=10)
+                self.assertTrue(instances)
+                self.assertTrue(all(reader.obj_typename(obj_id) == 'LegacyA' for obj_id in instances))
+
+                self.assertGreaterEqual(reader.sql_val("SELECT COUNT(*) FROM pyframe"), 1)
+                self.assertGreaterEqual(reader.sql_val("SELECT COUNT(*) FROM thread"), 1)
+                self.assertGreaterEqual(
+                    reader.sql_val("SELECT COUNT(*) FROM function WHERE func_name = ?", ('has_closure',)),
+                    1,
+                )
+
+                default_factory_refs = reader.sql(
+                    """
+                    SELECT reference.ref, pytype.name
+                    FROM reference
+                    JOIN object ON reference.dst = object.id
+                    JOIN pytype ON object.pytype = pytype.object
+                    WHERE reference.ref = '.default_factory'
+                    """
+                )
+                self.assertTrue(any(name == 'type' for _, name in default_factory_refs))
+
+                conn = sqlite3.connect(str(analysis_path))
+                try:
+                    index_names = {
+                        row[0] for row in conn.execute(
+                            "SELECT name FROM sqlite_master WHERE type = 'index'"
+                        )
+                    }
+                finally:
+                    conn.close()
+                self.assertIn('reference_src', index_names)
