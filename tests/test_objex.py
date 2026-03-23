@@ -1,5 +1,7 @@
 import collections
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -166,3 +168,17 @@ class ObjexTests(unittest.TestCase):
                 finally:
                     conn.close()
                 self.assertIn('reference_src', index_names)
+
+    def test_module_help_does_not_start_console(self):
+        result = subprocess.run(
+            [sys.executable, '-m', 'objex', '--help'],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=Path(__file__).resolve().parents[1],
+        )
+
+        self.assertIn('usage:', result.stdout)
+        self.assertIn('make-analysis-db', result.stdout)
+        self.assertIn('explore', result.stdout)
+        self.assertNotIn('WELCOME TO OBJEX EXPLORER', result.stdout)
