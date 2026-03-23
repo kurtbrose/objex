@@ -2,6 +2,7 @@ import argparse
 import os
 
 from . import explorer
+from . import web
 
 
 def build_parser():
@@ -23,6 +24,14 @@ def build_parser():
     )
     make_analysis_parser.add_argument('collection_db', help='Path to the collected objex dump database.')
     make_analysis_parser.add_argument('analysis_db', help='Path to write the analysis database.')
+
+    web_parser = subparsers.add_parser(
+        'web',
+        help='Serve a local web UI for an objex analysis database.',
+    )
+    web_parser.add_argument('analysis_db', help='Path to an objex analysis database.')
+    web_parser.add_argument('--host', default='127.0.0.1', help='Host interface to bind. Default: 127.0.0.1')
+    web_parser.add_argument('--port', type=int, default=8000, help='Port to bind. Default: 8000')
     return parser
 
 
@@ -32,7 +41,7 @@ def main(argv=None):
 
         argv = sys.argv[1:]
 
-    if argv and argv[0] not in {'explore', 'make-analysis-db', '-h', '--help'}:
+    if argv and argv[0] not in {'explore', 'make-analysis-db', 'web', '-h', '--help'}:
         argv = ['explore'] + argv
 
     parser = build_parser()
@@ -40,6 +49,22 @@ def main(argv=None):
 
     if args.command == 'make-analysis-db':
         explorer.make_analysis_db(args.collection_db, args.analysis_db)
+        return 0
+
+    if args.command == 'web':
+        server = web.serve(args.analysis_db, host=args.host, port=args.port)
+        actual_host, actual_port = server.server_address[:2]
+        print('Serving objex web UI for {} at http://{}:{}/'.format(
+            args.analysis_db,
+            actual_host,
+            actual_port,
+        ))
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            server.server_close()
         return 0
 
     if args.command != 'explore':

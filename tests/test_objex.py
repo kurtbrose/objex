@@ -1,4 +1,5 @@
 import collections
+import json
 import sqlite3
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from pathlib import Path
 
 from objex import Reader, dump_graph, make_analysis_db
 from objex.explorer import InvalidDatabaseError
+from objex.web import dispatch_request
 
 
 class LegacyA:
@@ -118,46 +120,44 @@ class ObjexTests(unittest.TestCase):
                 dump_graph(str(dump_path), use_gc=use_gc)
                 make_analysis_db(str(dump_path), str(analysis_path))
 
-                reader = Reader(str(analysis_path))
-                self.addCleanup(reader.conn.close)
+                with Reader(str(analysis_path)) as reader:
+                    self.assertTrue(dump_path.exists())
+                    self.assertTrue(analysis_path.exists())
+                    self.assertGreater(reader.object_count(), 0)
+                    self.assertGreater(reader.reference_count(), 0)
+                    self.assertGreater(reader.visible_memory_fraction(), 0)
+                    self.assertLessEqual(reader.visible_memory_fraction(), 1.5)
 
-                self.assertTrue(dump_path.exists())
-                self.assertTrue(analysis_path.exists())
-                self.assertGreater(reader.object_count(), 0)
-                self.assertGreater(reader.reference_count(), 0)
-                self.assertGreater(reader.visible_memory_fraction(), 0)
-                self.assertLessEqual(reader.visible_memory_fraction(), 1.5)
+                    modules = reader.get_modules()
+                    self.assertIn('builtins', modules)
 
-                modules = reader.get_modules()
-                self.assertIn('builtins', modules)
+                    legacy_type_ids = reader.find_type_by_name('LegacyA')
+                    self.assertTrue(legacy_type_ids)
+                    legacy_type_id = legacy_type_ids[0]
+                    self.assertTrue(reader.typequalname(legacy_type_id).endswith('LegacyA'))
+                    self.assertGreaterEqual(reader.obj_instance_count(legacy_type_id), 1)
 
-                legacy_type_ids = reader.find_type_by_name('LegacyA')
-                self.assertTrue(legacy_type_ids)
-                legacy_type_id = legacy_type_ids[0]
-                self.assertTrue(reader.typequalname(legacy_type_id).endswith('LegacyA'))
-                self.assertGreaterEqual(reader.obj_instance_count(legacy_type_id), 1)
+                    instances = reader.random_instances(legacy_type_id, limit=10)
+                    self.assertTrue(instances)
+                    self.assertTrue(all(reader.obj_typename(obj_id) == 'LegacyA' for obj_id in instances))
 
-                instances = reader.random_instances(legacy_type_id, limit=10)
-                self.assertTrue(instances)
-                self.assertTrue(all(reader.obj_typename(obj_id) == 'LegacyA' for obj_id in instances))
+                    self.assertGreaterEqual(reader.sql_val("SELECT COUNT(*) FROM pyframe"), 1)
+                    self.assertGreaterEqual(reader.sql_val("SELECT COUNT(*) FROM thread"), 1)
+                    self.assertGreaterEqual(
+                        reader.sql_val("SELECT COUNT(*) FROM function WHERE func_name = ?", ('has_closure',)),
+                        1,
+                    )
 
-                self.assertGreaterEqual(reader.sql_val("SELECT COUNT(*) FROM pyframe"), 1)
-                self.assertGreaterEqual(reader.sql_val("SELECT COUNT(*) FROM thread"), 1)
-                self.assertGreaterEqual(
-                    reader.sql_val("SELECT COUNT(*) FROM function WHERE func_name = ?", ('has_closure',)),
-                    1,
-                )
-
-                default_factory_refs = reader.sql(
-                    """
-                    SELECT reference.ref, pytype.name
-                    FROM reference
-                    JOIN object ON reference.dst = object.id
-                    JOIN pytype ON object.pytype = pytype.object
-                    WHERE reference.ref = '.default_factory'
-                    """
-                )
-                self.assertTrue(any(name == 'type' for _, name in default_factory_refs))
+                    default_factory_refs = reader.sql(
+                        """
+                        SELECT reference.ref, pytype.name
+                        FROM reference
+                        JOIN object ON reference.dst = object.id
+                        JOIN pytype ON object.pytype = pytype.object
+                        WHERE reference.ref = '.default_factory'
+                        """
+                    )
+                    self.assertTrue(any(name == 'type' for _, name in default_factory_refs))
 
                 conn = sqlite3.connect(str(analysis_path))
                 try:
@@ -230,3 +230,35 @@ class ObjexTests(unittest.TestCase):
 
         with self.assertRaises(InvalidDatabaseError):
             Reader(str(invalid_db))
+
+    def test_web_api_serves_summary_and_object_views(self):
+        base_path = Path(self.temp_dir.name)
+        dump_path = base_path / 'web.db'
+        analysis_path = base_path / 'web-analysis.db'
+        dump_graph(str(dump_path), use_gc=False)
+        make_analysis_db(str(dump_path), str(analysis_path))
+
+        status_code, _, body = dispatch_request(str(analysis_path), '/api/summary')
+        self.assertEqual(status_code, 200)
+        summary = json.loads(body)
+        self.assertIn('hostname', summary)
+        self.assertGreater(summary['object_count'], 0)
+
+        status_code, _, body = dispatch_request(str(analysis_path), '/api/random')
+        self.assertEqual(status_code, 200)
+        random_payload = json.loads(body)
+        status_code, _, body = dispatch_request(
+            str(analysis_path), '/api/object?id={}'.format(random_payload['id'])
+        )
+        self.assertEqual(status_code, 200)
+        object_payload = json.loads(body)
+        self.assertEqual(object_payload['id'], random_payload['id'])
+        self.assertIn('label', object_payload)
+
+        status_code, _, body = dispatch_request(
+            str(analysis_path), '/api/referents?id={}&limit=5'.format(random_payload['id'])
+        )
+        self.assertEqual(status_code, 200)
+        referents_payload = json.loads(body)
+        self.assertIn('count', referents_payload)
+        self.assertIn('items', referents_payload)

@@ -119,6 +119,15 @@ class Reader:
         self.conn.text_factory = str
         _validate_objex_db(self.conn, path)
 
+    def close(self):
+        self.conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
     def sql(self, sql, args=None):
         '''run SELECT sql against underling DB'''
         if args is None:
@@ -138,6 +147,17 @@ class Reader:
     def sql_list(self, sql, args=None):
         '''run SELECT and return [a, b, c] instead of [(a,), (b,), (c,)]'''
         return list(sum(self.sql(sql, args), ()))
+
+    def summary_stats(self):
+        return {
+            'path': self.path,
+            'hostname': self.sql_val('SELECT hostname FROM meta'),
+            'timestamp': self.sql_val('SELECT ts FROM meta'),
+            'memory_mb': self.sql_val('SELECT memory_mb FROM meta'),
+            'visible_memory_fraction': self.visible_memory_fraction(),
+            'object_count': self.object_count(),
+            'reference_count': self.reference_count(),
+        }
 
     def object_count(self):
         return self.sql_val('SELECT count(*) FROM object')
@@ -648,6 +668,78 @@ class Reader:
         get the object that has had a mark applied
         '''
         return self.sql_val('SELECT object FROM object_mark WHERE mark = ?', (mark,))
+
+    def random_object_id(self):
+        return self.sql_val('SELECT id FROM object ORDER BY random() LIMIT 1')
+
+    def object_label(self, obj_id):
+        marks = self.get_marks(obj_id)
+        mark_label = '{' + ', '.join(marks) + '}' if marks else ''
+        if self.obj_is_type(obj_id):
+            name = 'type ' + self.typequalname(obj_id)
+        elif self.obj_is_module(obj_id):
+            name = 'module ' + self.modulename(obj_id)
+        elif self.obj_is_func(obj_id):
+            name = 'function ' + self.funcname(obj_id)
+        elif self.obj_is_frame(obj_id):
+            name = 'frame ' + self.frame_codename(obj_id)
+        else:
+            name = self.obj_typequalname(obj_id)
+        return '<{}{}#{}>'.format(name, mark_label, obj_id)
+
+    def object_summary(self, obj_id):
+        return {
+            'id': obj_id,
+            'label': self.object_label(obj_id),
+            'type_id': self.obj_type(obj_id),
+            'typename': self.obj_typename(obj_id),
+            'typequalname': self.obj_typequalname(obj_id),
+            'size': self.obj_size(obj_id),
+            'refcount': self.obj_refcount(obj_id),
+            'len': self.obj_len(obj_id),
+            'marks': self.get_marks(obj_id),
+            'flags': {
+                'is_type': bool(self.obj_is_type(obj_id)),
+                'is_module': bool(self.obj_is_module(obj_id)),
+                'is_func': bool(self.obj_is_func(obj_id)),
+                'is_frame': bool(self.obj_is_frame(obj_id)),
+            },
+        }
+
+    def object_referents_data(self, obj_id, limit=50):
+        return {
+            'count': self.obj_refers_to_count(obj_id),
+            'items': [
+                {'ref': ref, 'object': self.object_summary(dst)}
+                for ref, dst in self.obj_refers_to(obj_id, limit=limit)
+            ],
+        }
+
+    def object_referrers_data(self, obj_id, limit=50):
+        return {
+            'count': self.refers_to_obj_count(obj_id),
+            'items': [
+                {'ref': ref, 'object': self.object_summary(src)}
+                for ref, src in self.refers_to_obj(obj_id, limit=limit)
+            ],
+        }
+
+    def type_search_data(self, query, limit=20):
+        pattern = query if '%' in query else '%{}%'.format(query)
+        type_ids = self.find_type_by_name(pattern)[:limit]
+        return [
+            {
+                'type_id': type_id,
+                'label': self.object_label(type_id),
+                'name': self.typename(type_id),
+                'qualname': self.typequalname(type_id),
+                'instance_count': self.obj_instance_count(type_id),
+            }
+            for type_id in type_ids
+        ]
+
+    def resolve_path(self, path):
+        return go_to_path(self, path)
 
 
 class PathFailure(Exception): pass

@@ -1,0 +1,373 @@
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
+
+from .explorer import PathFailure, Reader
+
+
+INDEX_HTML = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>objex web</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">objex web</div>
+    <form id="jump-form"><input id="jump-id" placeholder="Object ID"><button>Go</button></form>
+    <form id="path-form"><input id="path-input" placeholder="Path like sys.modules"><button>Path</button></form>
+    <form id="type-form"><input id="type-input" placeholder="Type search"><button>Type</button></form>
+    <button id="random-btn" type="button">Random</button>
+  </header>
+  <section id="summary" class="summary"></section>
+  <section id="message" class="message"></section>
+  <main class="layout">
+    <aside id="object-panel" class="panel"></aside>
+    <section id="outbound-panel" class="panel"></section>
+    <section id="inbound-panel" class="panel"></section>
+  </main>
+  <section id="search-results" class="panel search-results"></section>
+  <script src="/app.js"></script>
+</body>
+</html>
+"""
+
+
+APP_JS = """const state = { currentObjectId: null };
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>\\"]/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '\\"': '&quot;'}[ch]));
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url);
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || `Request failed: ${response.status}`);
+  }
+  return payload;
+}
+
+function objectLink(obj) {
+  return `<button class="object-link" data-object-id="${obj.id}">${escapeHtml(obj.label)}</button>`;
+}
+
+function renderSummary(summary) {
+  document.getElementById('summary').innerHTML = `
+    <div><strong>${escapeHtml(summary.path)}</strong></div>
+    <div>${escapeHtml(summary.hostname)} at ${escapeHtml(summary.timestamp)}</div>
+    <div>${summary.object_count.toLocaleString()} objects, ${summary.reference_count.toLocaleString()} references</div>
+    <div>${summary.memory_mb.toFixed(1)} MiB RSS, ${(summary.visible_memory_fraction * 100).toFixed(1)}% visible</div>
+  `;
+}
+
+function renderObjectPanel(obj) {
+  document.getElementById('object-panel').innerHTML = `
+    <h2>Current Object</h2>
+    <div class="object-label">${escapeHtml(obj.label)}</div>
+    <dl class="meta">
+      <dt>ID</dt><dd>${obj.id}</dd>
+      <dt>Type</dt><dd>${escapeHtml(obj.typequalname)}</dd>
+      <dt>Size</dt><dd>${obj.size}</dd>
+      <dt>Refcount</dt><dd>${obj.refcount}</dd>
+      <dt>Len</dt><dd>${obj.len ?? ''}</dd>
+    </dl>
+  `;
+}
+
+function renderRefs(elementId, title, data) {
+  const items = data.items.map(item => `
+    <li>
+      <span class="edge">${escapeHtml(item.ref)}</span>
+      ${objectLink(item.object)}
+      <span class="type">${escapeHtml(item.object.typequalname)}</span>
+    </li>
+  `).join('');
+  document.getElementById(elementId).innerHTML = `
+    <h2>${title} (${data.count})</h2>
+    <ul class="refs">${items || '<li class="empty">No entries</li>'}</ul>
+  `;
+}
+
+function renderSearchResults(items) {
+  const el = document.getElementById('search-results');
+  if (!items.length) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = `
+    <h2>Type Search</h2>
+    <ul class="refs">
+      ${items.map(item => `<li>${objectLink({id: item.type_id, label: item.label})} <span class="type">${escapeHtml(item.qualname)}</span> <span class="edge">instances=${item.instance_count}</span></li>`).join('')}
+    </ul>
+  `;
+}
+
+function setMessage(message) {
+  document.getElementById('message').textContent = message || '';
+}
+
+async function loadObject(id, pushState = true) {
+  try {
+    setMessage('');
+    const [obj, referents, referrers] = await Promise.all([
+      fetchJson(`/api/object?id=${encodeURIComponent(id)}`),
+      fetchJson(`/api/referents?id=${encodeURIComponent(id)}&limit=100`),
+      fetchJson(`/api/referrers?id=${encodeURIComponent(id)}&limit=100`)
+    ]);
+    state.currentObjectId = obj.id;
+    renderObjectPanel(obj);
+    renderRefs('outbound-panel', 'Outbound References', referents);
+    renderRefs('inbound-panel', 'Inbound References', referrers);
+    if (pushState) {
+      history.pushState({ id: obj.id }, '', `/?id=${obj.id}`);
+    }
+  } catch (err) {
+    setMessage(err.message);
+  }
+}
+
+async function init() {
+  const summary = await fetchJson('/api/summary');
+  renderSummary(summary);
+
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get('id');
+  if (id) {
+    loadObject(id, false);
+  } else {
+    const random = await fetchJson('/api/random');
+    loadObject(random.id, false);
+  }
+
+  document.body.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-object-id]');
+    if (button) {
+      event.preventDefault();
+      loadObject(button.dataset.objectId);
+    }
+  });
+
+  document.getElementById('jump-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const value = document.getElementById('jump-id').value.trim();
+    if (value) loadObject(value);
+  });
+
+  document.getElementById('path-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const value = document.getElementById('path-input').value.trim();
+    if (!value) return;
+    try {
+      const payload = await fetchJson(`/api/go?path=${encodeURIComponent(value)}`);
+      loadObject(payload.id);
+    } catch (err) {
+      setMessage(err.message);
+    }
+  });
+
+  document.getElementById('type-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const value = document.getElementById('type-input').value.trim();
+    if (!value) return;
+    try {
+      const payload = await fetchJson(`/api/type-search?q=${encodeURIComponent(value)}`);
+      renderSearchResults(payload.items);
+    } catch (err) {
+      setMessage(err.message);
+    }
+  });
+
+  document.getElementById('random-btn').addEventListener('click', async () => {
+    const payload = await fetchJson('/api/random');
+    loadObject(payload.id);
+  });
+
+  window.addEventListener('popstate', (event) => {
+    if (event.state && event.state.id) {
+      loadObject(event.state.id, false);
+    }
+  });
+}
+
+init().catch(err => setMessage(err.message));
+"""
+
+
+STYLES_CSS = """body {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  margin: 0;
+  background: #f3f0e8;
+  color: #1f2328;
+}
+.topbar {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: #1f3a5f;
+  color: #fff;
+  position: sticky;
+  top: 0;
+}
+.topbar form { display: flex; gap: 0.4rem; }
+.topbar input {
+  min-width: 14rem;
+  padding: 0.45rem 0.6rem;
+}
+.topbar button, .object-link {
+  padding: 0.45rem 0.7rem;
+  border: 0;
+  background: #d6c5a3;
+  color: #1f2328;
+  cursor: pointer;
+}
+.brand { font-weight: 700; margin-right: 0.5rem; }
+.summary, .message, .panel {
+  margin: 1rem;
+  padding: 1rem;
+  background: #fffdf8;
+  border: 1px solid #d7d1c3;
+  border-radius: 0.5rem;
+}
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr 1.5fr;
+  gap: 0;
+}
+.refs {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.refs li {
+  padding: 0.35rem 0;
+  border-top: 1px solid #eee6d7;
+}
+.refs li:first-child { border-top: 0; }
+.edge {
+  font-family: ui-monospace, monospace;
+  color: #8a4b08;
+  margin-right: 0.45rem;
+}
+.type {
+  color: #5d6470;
+  margin-left: 0.45rem;
+}
+.meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 0.75rem;
+}
+.object-label {
+  font-family: ui-monospace, monospace;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+}
+.empty { color: #6b7280; }
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; }
+  .topbar { flex-wrap: wrap; }
+  .topbar input { min-width: 10rem; }
+}
+"""
+
+
+def _json_bytes(payload):
+    return json.dumps(payload, sort_keys=True).encode('utf-8')
+
+
+def dispatch_request(db_path, path):
+    parsed = urlparse(path)
+    query = parse_qs(parsed.query)
+    if parsed.path == '/':
+        return 200, 'text/html; charset=utf-8', INDEX_HTML.encode('utf-8')
+    if parsed.path == '/app.js':
+        return 200, 'application/javascript; charset=utf-8', APP_JS.encode('utf-8')
+    if parsed.path == '/styles.css':
+        return 200, 'text/css; charset=utf-8', STYLES_CSS.encode('utf-8')
+
+    try:
+        with Reader(db_path) as reader:
+            if parsed.path == '/api/summary':
+                return 200, 'application/json; charset=utf-8', _json_bytes(reader.summary_stats())
+            if parsed.path == '/api/random':
+                return 200, 'application/json; charset=utf-8', _json_bytes({'id': reader.random_object_id()})
+            if parsed.path == '/api/object':
+                return 200, 'application/json; charset=utf-8', _json_bytes(
+                    reader.object_summary(_required_int(query, 'id'))
+                )
+            if parsed.path == '/api/referents':
+                return 200, 'application/json; charset=utf-8', _json_bytes(
+                    reader.object_referents_data(
+                        _required_int(query, 'id'),
+                        limit=_int_param(query, 'limit', 50),
+                    )
+                )
+            if parsed.path == '/api/referrers':
+                return 200, 'application/json; charset=utf-8', _json_bytes(
+                    reader.object_referrers_data(
+                        _required_int(query, 'id'),
+                        limit=_int_param(query, 'limit', 50),
+                    )
+                )
+            if parsed.path == '/api/type-search':
+                query_text = _required_param(query, 'q')
+                return 200, 'application/json; charset=utf-8', _json_bytes(
+                    {'items': reader.type_search_data(query_text, limit=_int_param(query, 'limit', 20))}
+                )
+            if parsed.path == '/api/go':
+                try:
+                    obj_id = reader.resolve_path(_required_param(query, 'path'))
+                except PathFailure as exc:
+                    return 404, 'application/json; charset=utf-8', _json_bytes({'error': str(exc)})
+                return 200, 'application/json; charset=utf-8', _json_bytes({'id': obj_id})
+    except Exception as exc:
+        return 400, 'application/json; charset=utf-8', _json_bytes({'error': str(exc)})
+
+    return 404, 'application/json; charset=utf-8', _json_bytes({'error': 'not found'})
+
+
+def _required_param(query, name):
+    values = query.get(name)
+    if not values or not values[0]:
+        raise ValueError('missing query parameter: {}'.format(name))
+    return values[0]
+
+
+def _required_int(query, name):
+    return int(_required_param(query, name))
+
+
+def _int_param(query, name, default):
+    values = query.get(name)
+    if not values or not values[0]:
+        return default
+    return int(values[0])
+
+
+def make_handler(db_path):
+    class ObjexWebHandler(BaseHTTPRequestHandler):
+        def log_message(self, fmt, *args):
+            return
+
+        def do_GET(self):
+            status_code, content_type, payload = dispatch_request(db_path, self.path)
+            self.send_response(status_code)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Content-Length', str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    return ObjexWebHandler
+
+
+def make_server(db_path, host='127.0.0.1', port=8000):
+    return ThreadingHTTPServer((host, port), make_handler(db_path))
+
+
+def serve(db_path, host='127.0.0.1', port=8000):
+    server = make_server(db_path, host=host, port=port)
+    return server
