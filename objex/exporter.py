@@ -343,10 +343,11 @@ class _Writer:
                 for varname, cell in zip(code.co_freevars, closure):
                     key_dst.append((".locals[{!r}]".format(varname), cell.cell_contents))
                 key_dst.append(('.__closure__', closure))
-            argspec = inspect.getfullargspec(obj)
-            defaults = argspec.defaults
+            positional_argcount = code.co_posonlyargcount + code.co_argcount
+            positional_argnames = code.co_varnames[:positional_argcount]
+            defaults = obj.__defaults__
             if defaults:  # (maybe) grab function defaults
-                for name, default in zip(reversed(argspec.args), reversed(defaults)):
+                for name, default in zip(reversed(positional_argnames), reversed(defaults)):
                     key_dst.append((".defaults[{!r}]".format(name), default))
                 key_dst.append(('.__defaults__', obj.__defaults__))
             key_dst.append((".__code__", code))
@@ -529,6 +530,35 @@ def dump_graph(path, print_info=False, use_gc=False):
             memory, dumpsize, 100 * (1 - dumpsize / memory)))
 
     return
+
+
+def spawn_dump(path, print_info=False, use_gc=False):
+    if not hasattr(os, 'fork'):
+        raise NotImplementedError('spawn_dump() requires os.fork() support')
+
+    pid = os.fork()
+    if pid:
+        return pid
+
+    try:
+        dump_graph(path, print_info=print_info, use_gc=use_gc)
+    except BaseException:
+        os._exit(1)
+    os._exit(0)
+
+
+def wait_dump(pid):
+    waited_pid, status = os.waitpid(pid, 0)
+    if waited_pid != pid:
+        raise RuntimeError('waited on unexpected pid: {}'.format(waited_pid))
+    if os.WIFEXITED(status):
+        exit_code = os.WEXITSTATUS(status)
+        if exit_code:
+            raise RuntimeError('objex dump process {} exited with status {}'.format(pid, exit_code))
+        return exit_code
+    if os.WIFSIGNALED(status):
+        raise RuntimeError('objex dump process {} terminated by signal {}'.format(pid, os.WTERMSIG(status)))
+    raise RuntimeError('objex dump process {} ended unexpectedly'.format(pid))
 
 
 #f_globals INTEGER, -- object (a dict instance)  OR should this be a ref type e.g. locals["foo"], globals["bar"]

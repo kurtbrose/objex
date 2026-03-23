@@ -1,5 +1,6 @@
 import collections
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -9,8 +10,8 @@ import time
 import unittest
 import weakref
 from pathlib import Path
-
-from objex import Reader, dump_graph, make_analysis_db
+from unittest.mock import patch
+from objex import Reader, dump_graph, make_analysis_db, spawn_dump, wait_dump
 from objex.explorer import InvalidDatabaseError
 from objex.web import dispatch_request
 
@@ -185,6 +186,34 @@ class ObjexTests(unittest.TestCase):
             self.assertEqual(conn.execute('PRAGMA journal_mode').fetchone()[0].lower(), 'delete')
         finally:
             conn.close()
+
+    def test_dump_graph_survives_getfullargspec_failures(self):
+        dump_path = Path(self.temp_dir.name) / 'getfullargspec-failure.db'
+
+        def raising_getfullargspec(obj):
+            raise TypeError('unsupported callable')
+
+        with patch('objex.exporter.inspect.getfullargspec', side_effect=raising_getfullargspec):
+            dump_graph(str(dump_path), use_gc=False)
+
+        with Reader(str(dump_path)) as reader:
+            self.assertGreater(reader.object_count(), 0)
+
+    @unittest.skipUnless(hasattr(os, 'fork'), 'requires os.fork')
+    def test_spawn_dump_and_wait_dump(self):
+        dump_path = Path(self.temp_dir.name) / 'forked.db'
+        self.stop_event.set()
+        self.thread.join(timeout=2)
+
+        pid = spawn_dump(str(dump_path), use_gc=False)
+        exit_code = wait_dump(pid)
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(dump_path.exists())
+        self.assertFalse(dump_path.with_name(dump_path.name + '-wal').exists())
+
+        with Reader(str(dump_path)) as reader:
+            self.assertGreater(reader.object_count(), 0)
 
     def test_module_help_does_not_start_console(self):
         result = subprocess.run(

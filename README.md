@@ -21,8 +21,8 @@ uv add '.[cli]'
 1- collect data from a running process (this comines well with `os.fork`)
 
 ```python
-if not os.fork():  # child process
-    objex.dump_graph('dump.db')
+pid = objex.spawn_dump('dump.db')
+objex.wait_dump(pid)
 ```
 
 2- create an analysis database (this takes a few minutes as indices are added)
