@@ -76,7 +76,8 @@ def main(argv=None):
     analysis_db = args.analysis_db
 
     try:
-        explorer.Console(explorer.Reader(analysis_db)).run()
+        with explorer.Reader(analysis_db) as reader:
+            explorer.Console(reader).run()
     except Exception:
         if os.getenv('OBJEX_DEBUG', ''):
             import pdb

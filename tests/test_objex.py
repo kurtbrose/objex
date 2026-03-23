@@ -483,8 +483,15 @@ class ObjexTests(unittest.TestCase):
         make_analysis_db(str(dump_path), str(analysis_path))
 
         with Reader(str(analysis_path)) as reader:
-            obj_id = reader.random_object_id()
-            path = reader.find_path_to_module(obj_id)
+            obj_id = None
+            path = []
+            for candidate_obj_id in reader.random_objects(limit=100):
+                path = reader.find_path_to_module(candidate_obj_id)
+                if path:
+                    obj_id = candidate_obj_id
+                    break
+
+            assert obj_id is not None
             assert path
 
             stats_after_first = reader.root_cache_stats()
