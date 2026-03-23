@@ -49,6 +49,13 @@ class NoneModule:
 NoneModule.__module__ = None
 
 
+class ExplodingGetattr:
+    def __getattr__(self, name):
+        if name == '__dict__':
+            raise NameError("no mapped classes registered under the name '__dict__'")
+        raise AttributeError(name)
+
+
 def closing(a, b=1):
     c = 2
 
@@ -97,6 +104,7 @@ class ObjexTests(unittest.TestCase):
 
         closure = closing(1)
         empty_closure = make_empty_closure()
+        exploding_getattr = ExplodingGetattr()
         bound_method = StaticAndClassMethods().class_method
         generator = (item for item in range(2))
 
@@ -110,6 +118,7 @@ class ObjexTests(unittest.TestCase):
             'defaultdict_obj': defaultdict_obj,
             'closure': closure,
             'empty_closure': empty_closure,
+            'exploding_getattr': exploding_getattr,
             'bound_method': bound_method,
             'generator': generator,
             'weak_set': weak_set,
@@ -218,6 +227,14 @@ class ObjexTests(unittest.TestCase):
 
         with Reader(str(dump_path)) as reader:
             assert reader.sql_val("SELECT COUNT(*) FROM function WHERE func_name = ?", ('inner',)) > 0
+
+    def test_dump_graph_survives_non_attributeerror_dunder_dict_access(self):
+        dump_path = Path(self.temp_dir.name) / 'exploding-getattr.db'
+
+        dump_graph(str(dump_path), use_gc=False)
+
+        with Reader(str(dump_path)) as reader:
+            assert reader.find_type_by_name('ExplodingGetattr')
 
     @unittest.skipUnless(hasattr(os, 'fork'), 'requires os.fork')
     def test_spawn_dump_and_wait_dump(self):

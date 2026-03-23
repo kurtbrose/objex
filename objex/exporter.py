@@ -401,9 +401,12 @@ class _Writer:
                         for key in keys]
             key_dst.append(('.default_factory', obj.default_factory))
         if check_dict:
-            if hasattr(obj, "__dict__"):
+            try:
+                __dict__ = object.__getattribute__(obj, "__dict__")
+            except AttributeError:
+                __dict__ = None
+            if __dict__ is not None:
                 key_dst += [('.' + key, dst) for key, dst in obj.__dict__.items()]
-                __dict__ = obj.__dict__
                 if type(__dict__) is _DICT_PROXY_TYPE:
                     key_dst.append(('.__dict__<proxy>', __dict__))
                     key_dst.append(('.__dict__', gc.get_referents(__dict__)[0]))
