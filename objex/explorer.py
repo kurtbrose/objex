@@ -124,6 +124,8 @@ class Reader:
             conn.close()
             raise
         self.conn = conn
+        self._root_object_path_cache = {'module': {}, 'frame': {}}
+        self._root_cache_hits = {'module': 0, 'frame': 0}
 
     def close(self):
         self.conn.close()
@@ -356,6 +358,107 @@ class Reader:
             thread_stack_map[thread_id] = self.get_stack(frame_id)
         return thread_stack_map
 
+    def _object_path_to_ref_path(self, object_path):
+        obj_ref_path = []
+        for i in range(len(object_path) - 1):
+            src_obj_id = object_path[i]
+            dst_obj_id = object_path[i + 1]
+            ref = self.sql_val(
+                """
+                SELECT ref FROM reference WHERE
+                src = ? and (dst = ? or ref = '@' || ?) and NOT ref LIKE '%.f_globals%'
+                """,
+                (src_obj_id, dst_obj_id, dst_obj_id),
+            )
+            obj_ref_path.append((src_obj_id, ref))
+        return obj_ref_path
+
+    def _sql_in_clause(self, values):
+        values = tuple(values)
+        if not values:
+            raise ValueError('expected at least one value for SQL IN clause')
+        return '({})'.format(', '.join(['?'] * len(values))), values
+
+    def _cache_root_object_path(self, cache_name, object_path):
+        for idx in range(len(object_path)):
+            self._root_object_path_cache[cache_name][object_path[idx]] = list(object_path[:idx + 1])
+
+    def _reverse_parents(self, obj_ids):
+        obj_ids = tuple(dict.fromkeys(obj_ids))
+        if not obj_ids:
+            return []
+
+        parent_rows = []
+        for start in range(0, len(obj_ids), 800):
+            chunk = obj_ids[start:start + 800]
+            dst_clause, dst_args = self._sql_in_clause(chunk)
+            ref_clause, ref_args = self._sql_in_clause(tuple('@{}'.format(obj_id) for obj_id in chunk))
+            parent_rows.extend(self.sql(
+                """
+                SELECT src, dst FROM reference
+                WHERE dst IN {dst_clause}
+                AND NOT ref LIKE '%.f_globals%'
+                UNION ALL
+                SELECT src, CAST(substr(ref, 2) AS INTEGER) FROM reference
+                WHERE ref IN {ref_clause}
+                AND NOT ref LIKE '%.f_globals%'
+                """.format(dst_clause=dst_clause, ref_clause=ref_clause),
+                dst_args + ref_args,
+            ))
+        return parent_rows
+
+    def _find_root_object_path(self, root_obj_ids, dst_obj_id, cache_name, limit=20):
+        cached_path = self._root_object_path_cache[cache_name].get(dst_obj_id)
+        if cached_path:
+            self._root_cache_hits[cache_name] += 1
+            return list(cached_path)
+
+        root_obj_ids = set(root_obj_ids)
+        child_map = {dst_obj_id: None}
+        fringe = {dst_obj_id}
+        depth = 0
+
+        while fringe and depth <= limit:
+            next_fringe = set()
+            for obj_id in fringe:
+                if obj_id in root_obj_ids:
+                    object_path = [obj_id]
+                    break
+                cached_path = self._root_object_path_cache[cache_name].get(obj_id)
+                if cached_path:
+                    self._root_cache_hits[cache_name] += 1
+                    object_path = list(cached_path)
+                    break
+            else:
+                for parent_id, child_id in self._reverse_parents(fringe):
+                    if parent_id in child_map:
+                        continue
+                    child_map[parent_id] = child_id
+                    next_fringe.add(parent_id)
+                fringe = next_fringe
+                depth += 1
+                continue
+
+            cur = child_map[object_path[-1]]
+            while cur is not None:
+                object_path.append(cur)
+                cur = child_map[cur]
+            self._cache_root_object_path(cache_name, object_path)
+            return object_path
+        return []
+
+    def root_cache_stats(self):
+        return {
+            'module': {
+                'size': len(self._root_object_path_cache['module']),
+                'hits': self._root_cache_hits['module'],
+            },
+            'frame': {
+                'size': len(self._root_object_path_cache['frame']),
+                'hits': self._root_cache_hits['frame'],
+            },
+        }
+
     def _find_paths_from_any(self, src_obj_ids, dst_obj_id, limit=20):
         '''
         find the shortest path between any src and dst a variant of A*
@@ -451,7 +554,10 @@ class Reader:
         where the first obj-id is a module
         (obj_id itself is not included in the result)
         '''
-        return self._find_obj_ref_paths_from_any(self.get_modules().values(), obj_id)
+        object_path = self._find_root_object_path(self.get_modules().values(), obj_id, 'module')
+        if not object_path:
+            return []
+        return [self._object_path_to_ref_path(object_path)]
 
     def find_path_to_frame(self, obj_id):
         '''
@@ -459,7 +565,10 @@ class Reader:
         return [[(obj-id, ref), (obj-id, ref), ...], ..]
         (same as find_path_to_module)
         '''
-        return self._find_obj_ref_paths_from_any(self.sql_list('SELECT object FROM pyframe'), obj_id)
+        object_path = self._find_root_object_path(self.sql_list('SELECT object FROM pyframe'), obj_id, 'frame')
+        if not object_path:
+            return []
+        return [self._object_path_to_ref_path(object_path)]
 
     def find_path(self, src_obj_id, dst_obj_id):
         '''

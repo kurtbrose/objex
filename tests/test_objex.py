@@ -474,3 +474,30 @@ class ObjexTests(unittest.TestCase):
         assert 'sampled 25 random objects' in text
         assert 'Top module roots:' in text
         assert 'Top frame roots:' in text
+
+    def test_reader_root_path_cache_reuses_suffixes(self):
+        base_path = Path(self.temp_dir.name)
+        dump_path = base_path / 'cache.db'
+        analysis_path = base_path / 'cache-analysis.db'
+        dump_graph(str(dump_path), use_gc=False)
+        make_analysis_db(str(dump_path), str(analysis_path))
+
+        with Reader(str(analysis_path)) as reader:
+            obj_id = reader.random_object_id()
+            path = reader.find_path_to_module(obj_id)
+            assert path
+
+            stats_after_first = reader.root_cache_stats()
+            cached_ids = list(reader._root_object_path_cache['module'])
+            assert cached_ids
+
+            intermediate_obj_id = next(
+                cached_obj_id
+                for cached_obj_id in reversed(cached_ids)
+                if cached_obj_id != obj_id
+            )
+            reader.find_path_to_module(intermediate_obj_id)
+            stats_after_second = reader.root_cache_stats()
+
+        assert stats_after_first['module']['size'] > 0
+        assert stats_after_second['module']['hits'] > stats_after_first['module']['hits']
