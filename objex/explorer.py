@@ -669,6 +669,15 @@ class Reader:
         '''
         return self.sql_val('SELECT object FROM object_mark WHERE mark = ?', (mark,))
 
+    def get_all_marks(self):
+        return [
+            {
+                'mark': mark,
+                'object': self.object_summary(obj_id),
+            }
+            for obj_id, mark in self.sql('SELECT object, mark FROM object_mark ORDER BY mark')
+        ]
+
     def random_object_id(self):
         return self.sql_val('SELECT id FROM object ORDER BY random() LIMIT 1')
 

@@ -244,6 +244,11 @@ class ObjexTests(unittest.TestCase):
         self.assertIn('hostname', summary)
         self.assertGreater(summary['object_count'], 0)
 
+        status_code, _, body = dispatch_request(str(analysis_path), '/api/marks')
+        self.assertEqual(status_code, 200)
+        marks_payload = json.loads(body)
+        self.assertEqual(marks_payload['items'], [])
+
         status_code, _, body = dispatch_request(str(analysis_path), '/api/top-types?limit=5')
         self.assertEqual(status_code, 200)
         top_types_payload = json.loads(body)
@@ -266,6 +271,17 @@ class ObjexTests(unittest.TestCase):
         object_payload = json.loads(body)
         self.assertEqual(object_payload['id'], random_payload['id'])
         self.assertIn('label', object_payload)
+
+        status_code, _, body = dispatch_request(
+            str(analysis_path), '/api/mark?id={}&mark={}'.format(random_payload['id'], 'interesting')
+        )
+        self.assertEqual(status_code, 200)
+        self.assertTrue(json.loads(body)['ok'])
+
+        status_code, _, body = dispatch_request(str(analysis_path), '/api/marks')
+        self.assertEqual(status_code, 200)
+        marks_payload = json.loads(body)
+        self.assertEqual(marks_payload['items'][0]['mark'], 'interesting')
 
         status_code, _, body = dispatch_request(
             str(analysis_path), '/api/referents?id={}&limit=5'.format(random_payload['id'])

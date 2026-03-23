@@ -24,6 +24,7 @@ INDEX_HTML = """<!doctype html>
   <section id="summary" class="summary"></section>
   <section id="message" class="message"></section>
   <section id="discovery-panel" class="panel"></section>
+  <section id="marks-panel" class="panel"></section>
   <main class="layout">
     <aside id="object-panel" class="panel"></aside>
     <section id="outbound-panel" class="panel"></section>
@@ -89,6 +90,11 @@ function renderObjectPanel(obj) {
   document.getElementById('object-panel').innerHTML = `
     <h2>Current Object</h2>
     <div class="object-label">${escapeHtml(obj.label)}</div>
+    <form id="mark-form" class="mark-form">
+      <input id="mark-input" placeholder="bookmark name">
+      <button>Mark</button>
+    </form>
+    <div class="mark-list">${obj.marks.length ? obj.marks.map(mark => `<span class="mark-chip">${escapeHtml(mark)}</span>`).join('') : '<span class="empty">No marks</span>'}</div>
     <dl class="meta">
       <dt>ID</dt><dd>${obj.id}</dd>
       <dt>Type</dt><dd>${escapeHtml(obj.typequalname)}</dd>
@@ -96,6 +102,16 @@ function renderObjectPanel(obj) {
       <dt>Refcount</dt><dd>${obj.refcount}</dd>
       <dt>Len</dt><dd>${obj.len ?? ''}</dd>
     </dl>
+  `;
+}
+
+function renderMarksPanel(marksPayload) {
+  const items = marksPayload.items || [];
+  document.getElementById('marks-panel').innerHTML = `
+    <h2>Bookmarks</h2>
+    <ul class="refs">
+      ${items.length ? items.map(item => `<li><span class="edge">${escapeHtml(item.mark)}</span> ${objectLink(item.object)}</li>`).join('') : '<li class="empty">No bookmarks yet</li>'}
+    </ul>
   `;
 }
 
@@ -159,15 +175,17 @@ function setMessage(message) {
 async function loadObject(id, pushState = true) {
   try {
     setMessage('');
-    const [obj, referents, referrers, modulePaths, framePaths] = await Promise.all([
+    const [obj, referents, referrers, modulePaths, framePaths, marks] = await Promise.all([
       fetchJson(`/api/object?id=${encodeURIComponent(id)}`),
       fetchJson(`/api/referents?id=${encodeURIComponent(id)}&limit=100`),
       fetchJson(`/api/referrers?id=${encodeURIComponent(id)}&limit=100`),
       fetchJson(`/api/path-to-module?id=${encodeURIComponent(id)}&limit=10`),
-      fetchJson(`/api/path-to-frame?id=${encodeURIComponent(id)}&limit=10`)
+      fetchJson(`/api/path-to-frame?id=${encodeURIComponent(id)}&limit=10`),
+      fetchJson('/api/marks')
     ]);
     state.currentObjectId = obj.id;
     renderObjectPanel(obj);
+    renderMarksPanel(marks);
     renderRefs('outbound-panel', 'Outbound References', referents);
     renderRefs('inbound-panel', 'Inbound References', referrers);
     renderPaths(modulePaths, framePaths);
@@ -238,6 +256,25 @@ async function init() {
   document.getElementById('random-btn').addEventListener('click', async () => {
     const payload = await fetchJson('/api/random');
     loadObject(payload.id);
+  });
+
+  document.body.addEventListener('submit', async (event) => {
+    if (event.target.id !== 'mark-form') {
+      return;
+    }
+    event.preventDefault();
+    const input = document.getElementById('mark-input');
+    const mark = input.value.trim();
+    if (!mark || !state.currentObjectId) {
+      return;
+    }
+    try {
+      await fetchJson(`/api/mark?id=${encodeURIComponent(state.currentObjectId)}&mark=${encodeURIComponent(mark)}`);
+      input.value = '';
+      await loadObject(state.currentObjectId, false);
+    } catch (err) {
+      setMessage(err.message);
+    }
   });
 
   window.addEventListener('popstate', (event) => {
@@ -326,6 +363,26 @@ STYLES_CSS = """body {
   font-weight: 700;
   margin-bottom: 0.75rem;
 }
+.mark-form {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+.mark-form input {
+  flex: 1;
+  padding: 0.45rem 0.6rem;
+}
+.mark-list {
+  margin-bottom: 0.75rem;
+}
+.mark-chip {
+  display: inline-block;
+  padding: 0.2rem 0.45rem;
+  margin-right: 0.35rem;
+  background: #e8dcc5;
+  border-radius: 999px;
+  font-size: 0.9rem;
+}
 .empty { color: #6b7280; }
 .path-group + .path-group { margin-top: 1rem; }
 .path-row {
@@ -359,12 +416,23 @@ def dispatch_request(db_path, path):
         with Reader(db_path) as reader:
             if parsed.path == '/api/summary':
                 return 200, 'application/json; charset=utf-8', _json_bytes(reader.summary_stats())
+            if parsed.path == '/api/marks':
+                return 200, 'application/json; charset=utf-8', _json_bytes(
+                    {'items': reader.get_all_marks()}
+                )
             if parsed.path == '/api/random':
                 return 200, 'application/json; charset=utf-8', _json_bytes({'id': reader.random_object_id()})
             if parsed.path == '/api/object':
                 return 200, 'application/json; charset=utf-8', _json_bytes(
                     reader.object_summary(_required_int(query, 'id'))
                 )
+            if parsed.path == '/api/mark':
+                reader.mark_object(
+                    _required_int(query, 'id'),
+                    _required_param(query, 'mark'),
+                )
+                reader.conn.commit()
+                return 200, 'application/json; charset=utf-8', _json_bytes({'ok': True})
             if parsed.path == '/api/referents':
                 return 200, 'application/json; charset=utf-8', _json_bytes(
                     reader.object_referents_data(
