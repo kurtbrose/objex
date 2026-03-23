@@ -12,6 +12,7 @@ import unittest
 import weakref
 from pathlib import Path
 from unittest.mock import patch
+import objex.__main__ as objex_main
 from objex import Reader, dump_graph, make_analysis_db, spawn_dump, wait_dump
 from objex.explorer import InvalidDatabaseError
 from objex.web import dispatch_request
@@ -307,6 +308,24 @@ class ObjexTests(unittest.TestCase):
             cwd=Path(__file__).resolve().parents[1],
         )
         assert 'analysis_db' in result.stdout
+
+    def test_main_supports_existing_path_legacy_explore_form(self):
+        base_path = Path(self.temp_dir.name)
+        dump_path = base_path / 'legacy.db'
+        analysis_path = base_path / 'legacy-analysis.db'
+        dump_graph(str(dump_path), use_gc=False)
+        make_analysis_db(str(dump_path), str(analysis_path))
+
+        with patch('objex.__main__.explorer.Console.run', return_value=None):
+            assert objex_main.main([str(analysis_path)]) == 0
+
+    def test_main_does_not_treat_typos_as_legacy_explore_paths(self):
+        try:
+            objex_main.main(['expore'])
+        except SystemExit as exc:
+            assert exc.code == 2
+        else:
+            assert False, 'expected parser failure for unknown command typo'
 
     def test_reader_rejects_invalid_objex_db(self):
         invalid_db = Path(self.temp_dir.name) / 'invalid.db'

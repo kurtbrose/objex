@@ -5,6 +5,9 @@ from . import explorer
 from . import web
 
 
+_COMMANDS = {'explore', 'make-analysis-db', 'web'}
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog='python -m objex',
@@ -41,7 +44,7 @@ def main(argv=None):
 
         argv = sys.argv[1:]
 
-    if argv and argv[0] not in {'explore', 'make-analysis-db', 'web', '-h', '--help'}:
+    if argv and argv[0] not in _COMMANDS and argv[0] not in {'-h', '--help'} and os.path.exists(argv[0]):
         argv = ['explore'] + argv
 
     parser = build_parser()
