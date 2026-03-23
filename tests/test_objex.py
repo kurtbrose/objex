@@ -76,7 +76,7 @@ class ObjexTests(unittest.TestCase):
         self._sample_objects = self._make_sample_objects()
         self.thread = threading.Thread(target=self._stacker, daemon=True)
         self.thread.start()
-        self.assertTrue(self.started.wait(timeout=2))
+        assert self.started.wait(timeout=2)
 
     def tearDown(self):
         self.stop_event.set()
@@ -134,32 +134,32 @@ class ObjexTests(unittest.TestCase):
                 make_analysis_db(str(dump_path), str(analysis_path))
 
                 with Reader(str(analysis_path)) as reader:
-                    self.assertTrue(dump_path.exists())
-                    self.assertTrue(analysis_path.exists())
-                    self.assertGreater(reader.object_count(), 0)
-                    self.assertGreater(reader.reference_count(), 0)
-                    self.assertGreater(reader.visible_memory_fraction(), 0)
-                    self.assertLessEqual(reader.visible_memory_fraction(), 1.5)
+                    assert dump_path.exists()
+                    assert analysis_path.exists()
+                    assert reader.object_count() > 0
+                    assert reader.reference_count() > 0
+                    assert reader.visible_memory_fraction() > 0
+                    assert reader.visible_memory_fraction() <= 1.5
 
                     modules = reader.get_modules()
-                    self.assertIn('builtins', modules)
+                    assert 'builtins' in modules
 
                     legacy_type_ids = reader.find_type_by_name('LegacyA')
-                    self.assertTrue(legacy_type_ids)
+                    assert legacy_type_ids
                     legacy_type_id = legacy_type_ids[0]
-                    self.assertTrue(reader.typequalname(legacy_type_id).endswith('LegacyA'))
-                    self.assertGreaterEqual(reader.obj_instance_count(legacy_type_id), 1)
+                    assert reader.typequalname(legacy_type_id).endswith('LegacyA')
+                    assert reader.obj_instance_count(legacy_type_id) >= 1
 
                     instances = reader.random_instances(legacy_type_id, limit=10)
-                    self.assertTrue(instances)
-                    self.assertTrue(all(reader.obj_typename(obj_id) == 'LegacyA' for obj_id in instances))
+                    assert instances
+                    assert all(reader.obj_typename(obj_id) == 'LegacyA' for obj_id in instances)
 
-                    self.assertGreaterEqual(reader.sql_val("SELECT COUNT(*) FROM pyframe"), 1)
-                    self.assertGreaterEqual(reader.sql_val("SELECT COUNT(*) FROM thread"), 1)
-                    self.assertGreaterEqual(
-                        reader.sql_val("SELECT COUNT(*) FROM function WHERE func_name = ?", ('has_closure',)),
-                        1,
-                    )
+                    assert reader.sql_val("SELECT COUNT(*) FROM pyframe") >= 1
+                    assert reader.sql_val("SELECT COUNT(*) FROM thread") >= 1
+                    assert reader.sql_val(
+                        "SELECT COUNT(*) FROM function WHERE func_name = ?",
+                        ('has_closure',),
+                    ) >= 1
 
                     default_factory_refs = reader.sql(
                         """
@@ -170,7 +170,7 @@ class ObjexTests(unittest.TestCase):
                         WHERE reference.ref = '.default_factory'
                         """
                     )
-                    self.assertTrue(any(name == 'type' for _, name in default_factory_refs))
+                    assert any(name == 'type' for _, name in default_factory_refs)
 
                 conn = sqlite3.connect(str(analysis_path))
                 try:
@@ -181,21 +181,21 @@ class ObjexTests(unittest.TestCase):
                     }
                 finally:
                     conn.close()
-                self.assertIn('reference_src', index_names)
+                assert 'reference_src' in index_names
 
     def test_dump_graph_reconciles_wal_into_main_db(self):
         dump_path = Path(self.temp_dir.name) / 'portable.db'
 
         dump_graph(str(dump_path), use_gc=False)
 
-        self.assertTrue(dump_path.exists())
-        self.assertFalse(dump_path.with_name(dump_path.name + '-wal').exists())
+        assert dump_path.exists()
+        assert not dump_path.with_name(dump_path.name + '-wal').exists()
 
         conn = sqlite3.connect(str(dump_path))
         try:
-            self.assertEqual(conn.execute('SELECT COUNT(*) FROM meta').fetchone()[0], 1)
-            self.assertGreater(conn.execute('SELECT COUNT(*) FROM object').fetchone()[0], 0)
-            self.assertEqual(conn.execute('PRAGMA journal_mode').fetchone()[0].lower(), 'delete')
+            assert conn.execute('SELECT COUNT(*) FROM meta').fetchone()[0] == 1
+            assert conn.execute('SELECT COUNT(*) FROM object').fetchone()[0] > 0
+            assert conn.execute('PRAGMA journal_mode').fetchone()[0].lower() == 'delete'
         finally:
             conn.close()
 
@@ -209,7 +209,7 @@ class ObjexTests(unittest.TestCase):
             dump_graph(str(dump_path), use_gc=False)
 
         with Reader(str(dump_path)) as reader:
-            self.assertGreater(reader.object_count(), 0)
+            assert reader.object_count() > 0
 
     def test_dump_graph_survives_empty_closure_cells(self):
         dump_path = Path(self.temp_dir.name) / 'empty-closure.db'
@@ -217,10 +217,7 @@ class ObjexTests(unittest.TestCase):
         dump_graph(str(dump_path), use_gc=False)
 
         with Reader(str(dump_path)) as reader:
-            self.assertGreater(
-                reader.sql_val("SELECT COUNT(*) FROM function WHERE func_name = ?", ('inner',)),
-                0,
-            )
+            assert reader.sql_val("SELECT COUNT(*) FROM function WHERE func_name = ?", ('inner',)) > 0
 
     @unittest.skipUnless(hasattr(os, 'fork'), 'requires os.fork')
     def test_spawn_dump_and_wait_dump(self):
@@ -231,12 +228,12 @@ class ObjexTests(unittest.TestCase):
         pid = spawn_dump(str(dump_path), use_gc=False)
         exit_code = wait_dump(pid)
 
-        self.assertEqual(exit_code, 0)
-        self.assertTrue(dump_path.exists())
-        self.assertFalse(dump_path.with_name(dump_path.name + '-wal').exists())
+        assert exit_code == 0
+        assert dump_path.exists()
+        assert not dump_path.with_name(dump_path.name + '-wal').exists()
 
         with Reader(str(dump_path)) as reader:
-            self.assertGreater(reader.object_count(), 0)
+            assert reader.object_count() > 0
 
     def test_module_help_does_not_start_console(self):
         result = subprocess.run(
@@ -247,10 +244,10 @@ class ObjexTests(unittest.TestCase):
             cwd=Path(__file__).resolve().parents[1],
         )
 
-        self.assertIn('usage:', result.stdout)
-        self.assertIn('make-analysis-db', result.stdout)
-        self.assertIn('explore', result.stdout)
-        self.assertNotIn('WELCOME TO OBJEX EXPLORER', result.stdout)
+        assert 'usage:' in result.stdout
+        assert 'make-analysis-db' in result.stdout
+        assert 'explore' in result.stdout
+        assert 'WELCOME TO OBJEX EXPLORER' not in result.stdout
 
     def test_module_cli_parser_supports_legacy_explore_and_analysis_command(self):
         result = subprocess.run(
@@ -260,8 +257,8 @@ class ObjexTests(unittest.TestCase):
             check=True,
             cwd=Path(__file__).resolve().parents[1],
         )
-        self.assertIn('collection_db', result.stdout)
-        self.assertIn('analysis_db', result.stdout)
+        assert 'collection_db' in result.stdout
+        assert 'analysis_db' in result.stdout
 
         result = subprocess.run(
             [sys.executable, '-m', 'objex', 'explore', '--help'],
@@ -270,7 +267,7 @@ class ObjexTests(unittest.TestCase):
             check=True,
             cwd=Path(__file__).resolve().parents[1],
         )
-        self.assertIn('analysis_db', result.stdout)
+        assert 'analysis_db' in result.stdout
 
     def test_reader_rejects_invalid_objex_db(self):
         invalid_db = Path(self.temp_dir.name) / 'invalid.db'
@@ -281,8 +278,12 @@ class ObjexTests(unittest.TestCase):
         finally:
             conn.close()
 
-        with self.assertRaises(InvalidDatabaseError):
+        try:
             Reader(str(invalid_db))
+        except InvalidDatabaseError:
+            pass
+        else:
+            assert False, 'expected InvalidDatabaseError'
 
     def test_web_api_serves_summary_and_object_views(self):
         base_path = Path(self.temp_dir.name)
@@ -292,68 +293,68 @@ class ObjexTests(unittest.TestCase):
         make_analysis_db(str(dump_path), str(analysis_path))
 
         status_code, _, body = dispatch_request(str(analysis_path), '/api/summary')
-        self.assertEqual(status_code, 200)
+        assert status_code == 200
         summary = json.loads(body)
-        self.assertIn('hostname', summary)
-        self.assertGreater(summary['object_count'], 0)
+        assert 'hostname' in summary
+        assert summary['object_count'] > 0
 
         status_code, _, body = dispatch_request(str(analysis_path), '/api/marks')
-        self.assertEqual(status_code, 200)
+        assert status_code == 200
         marks_payload = json.loads(body)
-        self.assertEqual(marks_payload['items'], [])
+        assert marks_payload['items'] == []
 
         status_code, _, body = dispatch_request(str(analysis_path), '/api/top-types?limit=5')
-        self.assertEqual(status_code, 200)
+        assert status_code == 200
         top_types_payload = json.loads(body)
-        self.assertIn('items', top_types_payload)
-        self.assertTrue(top_types_payload['items'])
+        assert 'items' in top_types_payload
+        assert top_types_payload['items']
 
         status_code, _, body = dispatch_request(str(analysis_path), '/api/largest-objects?limit=5')
-        self.assertEqual(status_code, 200)
+        assert status_code == 200
         largest_objects_payload = json.loads(body)
-        self.assertIn('items', largest_objects_payload)
-        self.assertTrue(largest_objects_payload['items'])
+        assert 'items' in largest_objects_payload
+        assert largest_objects_payload['items']
 
         status_code, _, body = dispatch_request(str(analysis_path), '/api/random')
-        self.assertEqual(status_code, 200)
+        assert status_code == 200
         random_payload = json.loads(body)
         status_code, _, body = dispatch_request(
             str(analysis_path), '/api/object?id={}'.format(random_payload['id'])
         )
-        self.assertEqual(status_code, 200)
+        assert status_code == 200
         object_payload = json.loads(body)
-        self.assertEqual(object_payload['id'], random_payload['id'])
-        self.assertIn('label', object_payload)
+        assert object_payload['id'] == random_payload['id']
+        assert 'label' in object_payload
 
         status_code, _, body = dispatch_request(
             str(analysis_path), '/api/mark?id={}&mark={}'.format(random_payload['id'], 'interesting')
         )
-        self.assertEqual(status_code, 200)
-        self.assertTrue(json.loads(body)['ok'])
+        assert status_code == 200
+        assert json.loads(body)['ok']
 
         status_code, _, body = dispatch_request(str(analysis_path), '/api/marks')
-        self.assertEqual(status_code, 200)
+        assert status_code == 200
         marks_payload = json.loads(body)
-        self.assertEqual(marks_payload['items'][0]['mark'], 'interesting')
+        assert marks_payload['items'][0]['mark'] == 'interesting'
 
         status_code, _, body = dispatch_request(
             str(analysis_path), '/api/referents?id={}&limit=5'.format(random_payload['id'])
         )
-        self.assertEqual(status_code, 200)
+        assert status_code == 200
         referents_payload = json.loads(body)
-        self.assertIn('count', referents_payload)
-        self.assertIn('items', referents_payload)
+        assert 'count' in referents_payload
+        assert 'items' in referents_payload
 
         status_code, _, body = dispatch_request(
             str(analysis_path), '/api/path-to-module?id={}&limit=5'.format(random_payload['id'])
         )
-        self.assertEqual(status_code, 200)
+        assert status_code == 200
         module_paths_payload = json.loads(body)
-        self.assertIn('items', module_paths_payload)
+        assert 'items' in module_paths_payload
 
         status_code, _, body = dispatch_request(
             str(analysis_path), '/api/path-to-frame?id={}&limit=5'.format(random_payload['id'])
         )
-        self.assertEqual(status_code, 200)
+        assert status_code == 200
         frame_paths_payload = json.loads(body)
-        self.assertIn('items', frame_paths_payload)
+        assert 'items' in frame_paths_payload
