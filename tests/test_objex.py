@@ -182,6 +182,7 @@ class ObjexTests(unittest.TestCase):
         try:
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM meta').fetchone()[0], 1)
             self.assertGreater(conn.execute('SELECT COUNT(*) FROM object').fetchone()[0], 0)
+            self.assertEqual(conn.execute('PRAGMA journal_mode').fetchone()[0].lower(), 'delete')
         finally:
             conn.close()
 

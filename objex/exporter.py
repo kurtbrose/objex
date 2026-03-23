@@ -84,6 +84,7 @@ class _Writer:
     (ideally, the whole process is disposable when the export process is run)
     '''
     _TRACKED_TYPES = (types.ModuleType, types.FrameType, types.FunctionType, types.CodeType)
+    _COMMIT_INTERVAL_OBJECTS = 10000
 
     def __init__(self, conn, use_gc=False):
         self.conn = conn
@@ -110,6 +111,7 @@ class _Writer:
         self.ignore_ids.add(id(self.ignore_ids))
         self.ignore_ids.add(id(self.__dict__))
         self.ignore_ids.add(id(self))
+        self._objects_since_commit = 0
         # commented out tracing code
         # TODO how to put it in w/out hurting perf if off?
         # (maybe optional decorators?)
@@ -149,6 +151,11 @@ class _Writer:
         self.conn.executemany(sql, params)
         # total = time.time() - start
         # self.times.extend([total / len(params)] * len(params))
+
+    def maybe_commit(self):
+        if self._objects_since_commit >= self._COMMIT_INTERVAL_OBJECTS:
+            self.conn.commit()
+            self._objects_since_commit = 0
 
     def _ensure_db_id(self, obj, is_type=False, refs=0):
         '''
@@ -274,6 +281,8 @@ class _Writer:
         refs = refs + 1  # take into account current frame
         self.ignore_ids.add(obj_id)
         db_id = self._ensure_db_id(obj, refs=refs)
+        self._objects_since_commit += 1
+        self.maybe_commit()
         key_dst = []
         check_dict, check_slots = False, False  # whether to scrape the __dict__ and __slots__
         extra_relationship = None  # which special built-in to scrape as (dict, list, etc)
