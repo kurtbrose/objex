@@ -341,7 +341,11 @@ class _Writer:
             code = obj.__code__
             if closure:  # (maybe) grab function closure
                 for varname, cell in zip(code.co_freevars, closure):
-                    key_dst.append((".locals[{!r}]".format(varname), cell.cell_contents))
+                    try:
+                        cell_contents = cell.cell_contents
+                    except ValueError:
+                        continue
+                    key_dst.append((".locals[{!r}]".format(varname), cell_contents))
                 key_dst.append(('.__closure__', closure))
             positional_argcount = code.co_posonlyargcount + code.co_argcount
             positional_argnames = code.co_varnames[:positional_argcount]

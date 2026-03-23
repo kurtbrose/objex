@@ -58,6 +58,16 @@ def closing(a, b=1):
     return has_closure
 
 
+def make_empty_closure():
+    value = 'sentinel'
+
+    def inner():
+        return value
+
+    del value
+    return inner
+
+
 class ObjexTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -86,6 +96,7 @@ class ObjexTests(unittest.TestCase):
         defaultdict_obj[1] = 'cat'
 
         closure = closing(1)
+        empty_closure = make_empty_closure()
         bound_method = StaticAndClassMethods().class_method
         generator = (item for item in range(2))
 
@@ -98,6 +109,7 @@ class ObjexTests(unittest.TestCase):
             'deque_obj': deque_obj,
             'defaultdict_obj': defaultdict_obj,
             'closure': closure,
+            'empty_closure': empty_closure,
             'bound_method': bound_method,
             'generator': generator,
             'weak_set': weak_set,
@@ -198,6 +210,17 @@ class ObjexTests(unittest.TestCase):
 
         with Reader(str(dump_path)) as reader:
             self.assertGreater(reader.object_count(), 0)
+
+    def test_dump_graph_survives_empty_closure_cells(self):
+        dump_path = Path(self.temp_dir.name) / 'empty-closure.db'
+
+        dump_graph(str(dump_path), use_gc=False)
+
+        with Reader(str(dump_path)) as reader:
+            self.assertGreater(
+                reader.sql_val("SELECT COUNT(*) FROM function WHERE func_name = ?", ('inner',)),
+                0,
+            )
 
     @unittest.skipUnless(hasattr(os, 'fork'), 'requires os.fork')
     def test_spawn_dump_and_wait_dump(self):
