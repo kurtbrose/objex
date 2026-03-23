@@ -24,6 +24,12 @@ classifiers = [
 ]
 keywords = ["memory", "graph", "sqlite", "debugging"]
 
+[project.optional-dependencies]
+cli = [
+  "colorama>=0.4.6",
+  "termcolor>=2.5",
+]
+
 [project.urls]
 Homepage = "https://github.com/kurtbrose/objex"
 

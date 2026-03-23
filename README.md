@@ -2,6 +2,20 @@
 
 Objex - Export and explore Python object graphs
 
+## install
+
+Core library only:
+
+```bash
+uv add objex
+```
+
+CLI extras for the interactive analysis UI:
+
+```bash
+uv add '.[cli]'
+```
+
 # workflow
 
 1- collect data from a running process (this comines well with `os.fork`)
