@@ -7,7 +7,7 @@ name = "objex"
 version = "0.15.dev0"
 description = "object structure exporter"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = {text = "BSD"}
 authors = [
   {name = "Kurt Rose", email = "kurt@kurtrose.com"},
@@ -17,7 +17,6 @@ dependencies = [
 classifiers = [
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",

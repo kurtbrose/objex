@@ -1,6 +1,3 @@
-
-from __future__ import print_function
-
 import ast
 import os
 from cmd import Cmd
@@ -18,13 +15,6 @@ try:
     from termcolor import colored
 except ImportError:
     colored = lambda s, color: s
-
-
-try:
-    _INTEGER_TYPES = (int, long)
-except NameError:
-    _INTEGER_TYPES = (int,)
-
 
 from .schema import _INDICES
 from .dbutils import _run_ddl
@@ -75,7 +65,7 @@ def make_analysis_db(collection_db_path, analysis_db_path):
 _MISSING = object()
 
 
-class Reader(object):
+class Reader:
     '''read a graph dumped previously'''
     def __init__(self, path):
         self.path = path
@@ -308,7 +298,7 @@ class Reader(object):
         '''
         # {obj_id: parent} "towards" the sources
         for src_obj_id in src_obj_ids:
-            assert isinstance(src_obj_id, _INTEGER_TYPES), ("not an object id", src_obj_id)
+            assert isinstance(src_obj_id, int), ("not an object id", src_obj_id)
         src_parent = {obj_id: None for obj_id in src_obj_ids}
         src_fringe = set(src_parent)  # "fringe" meaning the "surface", nodes that touch exterior nodes
         # {obj_id: child} "towards" the destination

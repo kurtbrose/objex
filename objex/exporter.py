@@ -1,5 +1,3 @@
-from __future__ import print_function
-
 import collections
 import gc
 import inspect
@@ -19,8 +17,7 @@ from .schema import _SCHEMA
 from .dbutils import _run_ddl
 
 
-_DICT_PROXY_TYPE = getattr(types, 'DictProxyType', type(type.__dict__))
-_UNBOUND_METHOD_TYPE = getattr(types, 'UnboundMethodType', types.MethodType)
+_DICT_PROXY_TYPE = type(type.__dict__)
 
 # MAINTENANCE NOTE: why are some python types "special" and get broken out as
 # their own table type whereas others are not?
@@ -66,7 +63,7 @@ def _format_frame_trace(frame):
     )
 
 
-class _Writer(object):
+class _Writer:
     '''
     responsible for dumping objects
 
@@ -154,8 +151,6 @@ class _Writer(object):
         # e.g. first thing in object_id_map gets assigned 0, second -> 1, etc...
         obj_id = self.object_id_map[id(obj)] = len(self.object_id_map)
         obj_type = type(obj)
-        if getattr(types, 'InstanceType', None) is not None and obj_type is types.InstanceType:
-            obj_type = getattr(obj, "__class__", obj_type)
         type_obj_id = self._ensure_db_id(obj_type, is_type=True, refs=1)
         try:  # very hard to forward detect if this will works
             length = len(obj)
@@ -345,7 +340,7 @@ class _Writer(object):
         elif extra_relationship is types.GeneratorType:
             key_dst.append(('.gi_code', obj.gi_code))
             key_dst.append(('.gi_frame', obj.gi_frame))
-        elif extra_relationship in (types.MethodType, _UNBOUND_METHOD_TYPE):
+        elif extra_relationship is types.MethodType:
             key_dst += [
                 ('.__func__', obj.__func__),
                 ('.__self__', obj.__self__),
@@ -476,7 +471,7 @@ class _Writer(object):
 # special types that have special-handling code for discovering contents
 _SPECIAL_TYPES = set([
     dict, list, tuple, set, frozenset, types.FrameType, types.FunctionType,
-    types.GeneratorType, types.MethodType, _UNBOUND_METHOD_TYPE,
+    types.GeneratorType, types.MethodType,
     _DICT_PROXY_TYPE, classmethod, staticmethod, property,
     types.BuiltinFunctionType, types.BuiltinMethodType,
     types.ModuleType, collections.deque, collections.defaultdict])
