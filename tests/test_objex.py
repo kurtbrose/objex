@@ -12,8 +12,10 @@ import unittest
 import weakref
 from pathlib import Path
 from unittest.mock import patch
+from contextlib import redirect_stdout
+from io import StringIO
 import objex.__main__ as objex_main
-from objex import Reader, dump_graph, make_analysis_db, spawn_dump, wait_dump
+from objex import Reader, dump_graph, make_analysis_db, spawn_dump, wait_dump, Console
 from objex.explorer import InvalidDatabaseError
 from objex.web import dispatch_request
 
@@ -416,3 +418,25 @@ class ObjexTests(unittest.TestCase):
         assert status_code == 200
         frame_paths_payload = json.loads(body)
         assert 'items' in frame_paths_payload
+
+    def test_console_commands_validate_missing_args(self):
+        base_path = Path(self.temp_dir.name)
+        dump_path = base_path / 'console.db'
+        analysis_path = base_path / 'console-analysis.db'
+        dump_graph(str(dump_path), use_gc=False)
+        make_analysis_db(str(dump_path), str(analysis_path))
+
+        with Reader(str(analysis_path)) as reader:
+            console = Console(reader)
+            output = StringIO()
+            with redirect_stdout(output):
+                console.do_path_to([])
+                console.do_path_from([])
+                console.do_mark([])
+                console.do_top([])
+
+        text = output.getvalue()
+        assert 'path_to command expects one argument' in text
+        assert 'path_from command expects one argument' in text
+        assert 'mark command expects one argument' in text
+        assert 'top command expects one or two arguments' in text

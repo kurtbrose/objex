@@ -1199,7 +1199,12 @@ class Console(Cmd):
         self.do_list()
 
     def do_path_to(self, args):
+        if len(args) != 1:
+            print('path_to command expects one argument')
+            return
         towards = self._to_id(args[0])
+        if towards is None:
+            return
         ref_paths = self.reader.find_path(self.cur, towards)
         if not ref_paths:
             print("no path found to", self._obj_label(towards))
@@ -1209,7 +1214,12 @@ class Console(Cmd):
         print()
 
     def do_path_from(self, args):
+        if len(args) != 1:
+            print('path_from command expects one argument')
+            return
         from_ = self._to_id(args[0])
+        if from_ is None:
+            return
         ref_paths = self.reader.find_path(from_, self.cur)
         if not ref_paths:
             print("no path found from", self._obj_label(from_))
@@ -1219,9 +1229,15 @@ class Console(Cmd):
         print()
 
     def do_mark(self, args):
+        if len(args) != 1:
+            print('mark command expects one argument')
+            return
         self.reader.mark_object(self.cur, args[0])
 
     def do_top(self, args):
+        if not args:
+            print('top command expects one or two arguments')
+            return
         if len(args) == 2:
             num = int(args[0])
         else:
