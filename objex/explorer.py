@@ -20,6 +20,44 @@ from .schema import _INDICES
 from .dbutils import _run_ddl
 
 
+class InvalidDatabaseError(ValueError):
+    pass
+
+
+def _validate_objex_db(conn, path, require_indices=False):
+    table_names = {
+        row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
+    required_tables = {'meta', 'object', 'reference', 'pytype'}
+    missing_tables = sorted(required_tables - table_names)
+    if missing_tables:
+        raise InvalidDatabaseError(
+            '{} is not a valid objex database; missing tables: {}'.format(
+                path, ', '.join(missing_tables)
+            )
+        )
+
+    meta_count = conn.execute('SELECT COUNT(*) FROM meta').fetchone()[0]
+    if meta_count < 1:
+        raise InvalidDatabaseError(
+            '{} is not a valid objex database; meta table is empty'.format(path)
+        )
+
+    if require_indices:
+        index_names = {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            )
+        }
+        if 'reference_src' not in index_names:
+            raise InvalidDatabaseError(
+                '{} does not look like an analysis database; missing analysis indices. '
+                'Run `python -m objex make-analysis-db <collection.db> <analysis.db>` first.'.format(path)
+            )
+
+
 def _add_class_references(conn):
     '''
     ensure there is a __class__ pointing from instance to class
@@ -34,6 +72,12 @@ def _add_class_references(conn):
             ref = '__class__'
         )
     """)
+
+
+def _reconcile_source_wal(conn):
+    if conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == 'wal':
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.commit()
 
 
 def make_analysis_db(collection_db_path, analysis_db_path):
@@ -53,6 +97,8 @@ def make_analysis_db(collection_db_path, analysis_db_path):
     conn = sqlite3.connect(analysis_db_path)
     conn.text_factory = str
     try:
+        _reconcile_source_wal(source_conn)
+        _validate_objex_db(source_conn, collection_db_path)
         source_conn.backup(conn)
         _run_ddl(conn, _INDICES)
         _add_class_references(conn)
@@ -71,6 +117,7 @@ class Reader:
         self.path = path
         self.conn = sqlite3.connect(path)
         self.conn.text_factory = str
+        _validate_objex_db(self.conn, path)
 
     def sql(self, sql, args=None):
         '''run SELECT sql against underling DB'''

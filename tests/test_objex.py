@@ -10,6 +10,7 @@ import weakref
 from pathlib import Path
 
 from objex import Reader, dump_graph, make_analysis_db
+from objex.explorer import InvalidDatabaseError
 
 
 class LegacyA:
@@ -169,6 +170,21 @@ class ObjexTests(unittest.TestCase):
                     conn.close()
                 self.assertIn('reference_src', index_names)
 
+    def test_dump_graph_reconciles_wal_into_main_db(self):
+        dump_path = Path(self.temp_dir.name) / 'portable.db'
+
+        dump_graph(str(dump_path), use_gc=False)
+
+        self.assertTrue(dump_path.exists())
+        self.assertFalse(dump_path.with_name(dump_path.name + '-wal').exists())
+
+        conn = sqlite3.connect(str(dump_path))
+        try:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM meta').fetchone()[0], 1)
+            self.assertGreater(conn.execute('SELECT COUNT(*) FROM object').fetchone()[0], 0)
+        finally:
+            conn.close()
+
     def test_module_help_does_not_start_console(self):
         result = subprocess.run(
             [sys.executable, '-m', 'objex', '--help'],
@@ -202,3 +218,15 @@ class ObjexTests(unittest.TestCase):
             cwd=Path(__file__).resolve().parents[1],
         )
         self.assertIn('analysis_db', result.stdout)
+
+    def test_reader_rejects_invalid_objex_db(self):
+        invalid_db = Path(self.temp_dir.name) / 'invalid.db'
+        conn = sqlite3.connect(str(invalid_db))
+        try:
+            conn.execute('CREATE TABLE meta (id INTEGER PRIMARY KEY, hostname TEXT)')
+            conn.commit()
+        finally:
+            conn.close()
+
+        with self.assertRaises(InvalidDatabaseError):
+            Reader(str(invalid_db))

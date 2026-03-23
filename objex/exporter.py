@@ -63,6 +63,15 @@ def _format_frame_trace(frame):
     )
 
 
+def _finalize_wal(conn):
+    # Keep WAL for bulk writes, then fold everything back into the main DB
+    # so the final artifact is a portable single-file SQLite database.
+    conn.commit()
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.execute("PRAGMA journal_mode = DELETE")
+    conn.commit()
+
+
 class _Writer:
     '''
     responsible for dumping objects
@@ -464,7 +473,7 @@ class _Writer:
         self.conn.execute(
             "UPDATE meta SET duration_s = ?",
             (time.time() - self.started,))
-        self.conn.commit()
+        _finalize_wal(self.conn)
         self.conn.close()
 
 
