@@ -1,4 +1,5 @@
 import ast
+from collections import Counter
 import os
 from cmd import Cmd
 import pprint
@@ -640,6 +641,9 @@ class Reader:
         """given a type object id, return some random instances"""
         return self.sql_list("SELECT id FROM object WHERE pytype = ? ORDER BY random() LIMIT ?", (obj_id, limit))
 
+    def random_objects(self, limit=20):
+        return self.sql_list("SELECT id FROM object ORDER BY random() LIMIT ?", (limit,))
+
     def get_module_global(self, module_name, var_name):
         '''
         find the object which is referred to by a module named module_name with a variable named var_name
@@ -682,6 +686,47 @@ class Reader:
             }
             for obj_id, mark in self.sql('SELECT object, mark FROM object_mark ORDER BY mark')
         ]
+
+    def _normalize_ref_path(self, ref_path, prefix_depth=4):
+        if not ref_path:
+            return None
+        root_obj_id = ref_path[0][0]
+        segments = [self.object_label(root_obj_id)]
+        segments.extend(ref for _, ref in ref_path[:prefix_depth])
+        return ''.join(segments)
+
+    def sampled_root_summary(self, sample_size=500, top_n=10, path_prefix_depth=4):
+        module_root_counts = Counter()
+        module_path_counts = Counter()
+        frame_root_counts = Counter()
+        frame_path_counts = Counter()
+
+        for obj_id in self.random_objects(limit=sample_size):
+            module_paths = [path for path in self.find_path_to_module(obj_id) if path]
+            if module_paths:
+                root_obj_id = module_paths[0][0][0]
+                module_root_counts[self.modulename(root_obj_id) or self.object_label(root_obj_id)] += 1
+                for ref_path in module_paths:
+                    normalized = self._normalize_ref_path(ref_path, prefix_depth=path_prefix_depth)
+                    if normalized:
+                        module_path_counts[normalized] += 1
+
+            frame_paths = [path for path in self.find_path_to_frame(obj_id) if path]
+            if frame_paths:
+                root_obj_id = frame_paths[0][0][0]
+                frame_root_counts[self.frame_codename(root_obj_id)] += 1
+                for ref_path in frame_paths:
+                    normalized = self._normalize_ref_path(ref_path, prefix_depth=path_prefix_depth)
+                    if normalized:
+                        frame_path_counts[normalized] += 1
+
+        return {
+            'sample_size': sample_size,
+            'module_roots': module_root_counts.most_common(top_n),
+            'module_paths': module_path_counts.most_common(top_n),
+            'frame_roots': frame_root_counts.most_common(top_n),
+            'frame_paths': frame_path_counts.most_common(top_n),
+        }
 
     def random_object_id(self):
         return self.sql_val('SELECT id FROM object ORDER BY random() LIMIT 1')
@@ -1257,6 +1302,35 @@ class Console(Cmd):
         for val, obj_id in result:
             self._print_option('go %s' % obj_id, " {} ({:,})".format(self._obj_label(obj_id), val))
         print()
+
+    def _print_count_lines(self, title, items):
+        print(title)
+        if not items:
+            print('  (none)')
+            print()
+            return
+        for idx, (name, count) in enumerate(items, 1):
+            print(' {:>2} - {} ({:,})'.format(idx, name, count))
+        print()
+
+    def do_root_summary(self, args):
+        if len(args) not in (0, 1, 2):
+            print('root_summary expects zero, one, or two arguments')
+            return
+        sample_size = 500
+        top_n = 10
+        if args:
+            sample_size = int(args[0])
+        if len(args) == 2:
+            top_n = int(args[1])
+
+        summary = self.reader.sampled_root_summary(sample_size=sample_size, top_n=top_n)
+        print('sampled {} random objects'.format(summary['sample_size']))
+        print()
+        self._print_count_lines('Top module roots:', summary['module_roots'])
+        self._print_count_lines('Top module path prefixes:', summary['module_paths'])
+        self._print_count_lines('Top frame roots:', summary['frame_roots'])
+        self._print_count_lines('Top frame path prefixes:', summary['frame_paths'])
 
     def run(self):
         print("WELCOME TO OBJEX EXPLORER")

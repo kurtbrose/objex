@@ -440,3 +440,37 @@ class ObjexTests(unittest.TestCase):
         assert 'path_from command expects one argument' in text
         assert 'mark command expects one argument' in text
         assert 'top command expects one or two arguments' in text
+
+    def test_reader_sampled_root_summary(self):
+        base_path = Path(self.temp_dir.name)
+        dump_path = base_path / 'roots.db'
+        analysis_path = base_path / 'roots-analysis.db'
+        dump_graph(str(dump_path), use_gc=False)
+        make_analysis_db(str(dump_path), str(analysis_path))
+
+        with Reader(str(analysis_path)) as reader:
+            summary = reader.sampled_root_summary(sample_size=25, top_n=5)
+
+        assert summary['sample_size'] == 25
+        assert isinstance(summary['module_roots'], list)
+        assert isinstance(summary['module_paths'], list)
+        assert isinstance(summary['frame_roots'], list)
+        assert isinstance(summary['frame_paths'], list)
+
+    def test_console_root_summary(self):
+        base_path = Path(self.temp_dir.name)
+        dump_path = base_path / 'console-roots.db'
+        analysis_path = base_path / 'console-roots-analysis.db'
+        dump_graph(str(dump_path), use_gc=False)
+        make_analysis_db(str(dump_path), str(analysis_path))
+
+        with Reader(str(analysis_path)) as reader:
+            console = Console(reader)
+            output = StringIO()
+            with redirect_stdout(output):
+                console.do_root_summary(['25', '5'])
+
+        text = output.getvalue()
+        assert 'sampled 25 random objects' in text
+        assert 'Top module roots:' in text
+        assert 'Top frame roots:' in text
