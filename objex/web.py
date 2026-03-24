@@ -59,11 +59,21 @@ async function fetchJson(url) {
 }
 
 function objectLink(obj) {
-  return `<a class="object-link" href="/?id=${encodeURIComponent(obj.id)}" data-object-id="${obj.id}">${escapeHtml(obj.label)}</a>`;
+  return `<a class="object-link" href="/?id=${encodeURIComponent(obj.id)}" data-object-id="${obj.id}">${escapeHtml(displayLabel(obj.label))}</a>`;
 }
 
 function pathLink(path, label) {
   return `<a class="object-link path-link" href="/?q=${encodeURIComponent(path)}" data-go-query="${escapeHtml(path)}">${escapeHtml(label)}</a>`;
+}
+
+function displayLabel(label) {
+  if (!label) {
+    return '';
+  }
+  if (label.startsWith('<') && label.endsWith('>')) {
+    return label.slice(1, -1);
+  }
+  return label;
 }
 
 function renderModulePathLinks(moduleName) {
@@ -158,7 +168,7 @@ function renderRootSummaryError(message) {
 function renderObjectPanel(obj) {
   document.getElementById('object-panel').innerHTML = `
     <h2>Current Object</h2>
-    <div class="object-label">${escapeHtml(obj.label)}</div>
+    <div class="object-label">${escapeHtml(displayLabel(obj.label))}</div>
     <form id="mark-form" class="mark-form">
       <input id="mark-input" placeholder="bookmark name">
       <button>Mark</button>
@@ -184,12 +194,10 @@ function renderMarksPanel(marksPayload) {
   `;
 }
 
-function renderRefs(elementId, title, data) {
+function renderRefs(elementId, title, data, objectFirst = false) {
   const items = data.items.map(item => `
     <li>
-      <span class="edge">${escapeHtml(item.ref)}</span>
-      ${objectLink(item.object)}
-      <span class="type">${escapeHtml(item.object.typequalname)}</span>
+      ${objectFirst ? `${objectLink(item.object)} <span class="edge">${escapeHtml(item.ref)}</span>` : `<span class="edge">${escapeHtml(item.ref)}</span> ${objectLink(item.object)}`}
     </li>
   `).join('');
   document.getElementById(elementId).innerHTML = `
@@ -276,7 +284,7 @@ async function loadObject(id, pushState = true) {
     renderObjectPanel(obj);
     renderMarksPanel(marks);
     renderRefs('outbound-panel', 'Outbound References', referents);
-    renderRefs('inbound-panel', 'Inbound References', referrers);
+    renderRefs('inbound-panel', 'Inbound References', referrers, true);
     renderPaths(modulePaths, framePaths);
     if (pushState) {
       history.pushState({ id: obj.id }, '', `/?id=${obj.id}`);
