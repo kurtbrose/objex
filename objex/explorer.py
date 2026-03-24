@@ -1029,6 +1029,9 @@ class Reader:
             for type_id in type_ids
         ]
 
+    def resolve_go(self, query):
+        return resolve_go(self, query)
+
     def resolve_path(self, path):
         return go_to_path(self, path)
 
@@ -1101,6 +1104,8 @@ def go_to_path(reader, path):
                 break
         if not start:
             raise PathFailure("couldn't find start of path {!r}".format(path))
+        if path == modulename:
+            return start
         rest = path[len(modulename + '.'):]  # modulename + '.'
         sofar = [modulename]
     segs = rest.split('.')
@@ -1115,6 +1120,43 @@ def go_to_path(reader, path):
             raise PathFailure(
                 "failed on path {} after {}".format(path, '.'.join(sofar)))
     return cur
+
+
+def resolve_go(reader, query):
+    query = query.strip()
+    if not query:
+        raise PathFailure('empty go query')
+    if query == 'random':
+        return reader.random_object_id()
+    if query.isdigit():
+        return int(query)
+    try:
+        return go_to_path(reader, query)
+    except PathFailure:
+        pass
+
+    type_obj_id = reader.sql_val(
+        "SELECT object FROM pytype WHERE name = ? LIMIT 1",
+        (query,),
+        default=None,
+    )
+    if type_obj_id is not None:
+        return type_obj_id
+
+    type_obj_id = reader.sql_val(
+        """
+        SELECT pytype.object
+        FROM pytype JOIN module ON pytype.module = module.object
+        WHERE module.name || '.' || pytype.name = ?
+        LIMIT 1
+        """,
+        (query,),
+        default=None,
+    )
+    if type_obj_id is not None:
+        return type_obj_id
+
+    raise PathFailure("couldn't resolve go query {!r}".format(query))
 
 
 class Console(Cmd):
@@ -1430,16 +1472,13 @@ class Console(Cmd):
             print('go command expects one argument')
             return
         target = args[0]
-        if '.' in target:
-            if target.startswith('.'):
-                target = str(self.cur) + target
-            try:
-                target = go_to_path(self.reader, target)
-            except PathFailure as p:
-                print(p.args[0])
-                target = None
-        else:
-            target = self._to_id(target)
+        if target.startswith('.'):
+            target = str(self.cur) + target
+        try:
+            target = self.reader.resolve_go(target)
+        except PathFailure as p:
+            print(p.args[0])
+            target = None
         if target is None:
             return
         self.history_idx = len(self.history)

@@ -16,9 +16,7 @@ INDEX_HTML = """<!doctype html>
 <body>
   <header class="topbar">
     <a class="brand" href="/">objex web</a>
-    <form id="jump-form"><input id="jump-id" placeholder="Object ID"><button>Go</button></form>
-    <form id="path-form"><input id="path-input" placeholder="Path like sys.modules"><button>Path</button></form>
-    <form id="type-form"><input id="type-input" placeholder="Type search"><button>Type</button></form>
+    <form id="go-form" class="go-form"><input id="go-input" placeholder="Go to object id, path, or type"><button>Go</button></form>
     <button id="random-btn" type="button">Random</button>
   </header>
   <section id="summary" class="summary"></section>
@@ -65,7 +63,7 @@ function objectLink(obj) {
 }
 
 function pathLink(path, label) {
-  return `<a class="object-link path-link" href="/?path=${encodeURIComponent(path)}" data-go-path="${escapeHtml(path)}">${escapeHtml(label)}</a>`;
+  return `<a class="object-link path-link" href="/?q=${encodeURIComponent(path)}" data-go-query="${escapeHtml(path)}">${escapeHtml(label)}</a>`;
 }
 
 function renderModulePathLinks(moduleName) {
@@ -320,12 +318,20 @@ async function init() {
 
   const params = new URLSearchParams(window.location.search);
   const id = params.get('id');
+  const query = params.get('q');
   const path = params.get('path');
   if (id) {
     await loadObject(id, false);
+  } else if (query) {
+    try {
+      const payload = await fetchJson(`/api/go?q=${encodeURIComponent(query)}`);
+      await loadObject(payload.id, false);
+    } catch (err) {
+      setMessage(err.message);
+    }
   } else if (path) {
     try {
-      const payload = await fetchJson(`/api/go?path=${encodeURIComponent(path)}`);
+      const payload = await fetchJson(`/api/go?q=${encodeURIComponent(path)}`);
       await loadObject(payload.id, false);
     } catch (err) {
       setMessage(err.message);
@@ -345,11 +351,11 @@ async function init() {
       loadObject(button.dataset.objectId);
       return;
     }
-    const pathButton = event.target.closest('[data-go-path]');
+    const pathButton = event.target.closest('[data-go-query]');
     if (pathButton) {
       event.preventDefault();
       try {
-        const payload = await fetchJson(`/api/go?path=${encodeURIComponent(pathButton.dataset.goPath)}`);
+        const payload = await fetchJson(`/api/go?q=${encodeURIComponent(pathButton.dataset.goQuery)}`);
         loadObject(payload.id);
       } catch (err) {
         setMessage(err.message);
@@ -357,31 +363,13 @@ async function init() {
     }
   });
 
-  document.getElementById('jump-form').addEventListener('submit', (event) => {
+  document.getElementById('go-form').addEventListener('submit', async (event) => {
     event.preventDefault();
-    const value = document.getElementById('jump-id').value.trim();
-    if (value) loadObject(value);
-  });
-
-  document.getElementById('path-form').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const value = document.getElementById('path-input').value.trim();
+    const value = document.getElementById('go-input').value.trim();
     if (!value) return;
     try {
-      const payload = await fetchJson(`/api/go?path=${encodeURIComponent(value)}`);
+      const payload = await fetchJson(`/api/go?q=${encodeURIComponent(value)}`);
       loadObject(payload.id);
-    } catch (err) {
-      setMessage(err.message);
-    }
-  });
-
-  document.getElementById('type-form').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const value = document.getElementById('type-input').value.trim();
-    if (!value) return;
-    try {
-      const payload = await fetchJson(`/api/type-search?q=${encodeURIComponent(value)}`);
-      renderSearchResults(payload.items);
     } catch (err) {
       setMessage(err.message);
     }
@@ -436,7 +424,7 @@ STYLES_CSS = """body {
   background: #f3f0e8;
   color: #1f2328;
 }
-.topbar {
+  .topbar {
   display: flex;
   gap: 0.75rem;
   align-items: center;
@@ -447,8 +435,13 @@ STYLES_CSS = """body {
   top: 0;
 }
 .topbar form { display: flex; gap: 0.4rem; }
+.go-form {
+  flex: 1;
+  min-width: 16rem;
+}
 .topbar input {
-  min-width: 14rem;
+  min-width: 0;
+  width: 100%;
   padding: 0.45rem 0.6rem;
 }
 .topbar button, .object-link {
@@ -695,7 +688,10 @@ def dispatch_request(db_path, path):
                 )
             if parsed.path == '/api/go':
                 try:
-                    obj_id = reader.resolve_path(_required_param(query, 'path'))
+                    raw_query = query.get('q') or query.get('path')
+                    if not raw_query or not raw_query[0]:
+                        raise ValueError('missing query parameter: q')
+                    obj_id = reader.resolve_go(raw_query[0])
                 except PathFailure as exc:
                     return 404, 'application/json; charset=utf-8', _json_bytes({'error': str(exc)})
                 return 200, 'application/json; charset=utf-8', _json_bytes({'id': obj_id})

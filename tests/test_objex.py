@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 import weakref
 from pathlib import Path
@@ -18,6 +19,9 @@ import objex.__main__ as objex_main
 from objex import Reader, dump_graph, make_analysis_db, spawn_dump, wait_dump, Console
 from objex.explorer import InvalidDatabaseError
 from objex.web import dispatch_request
+
+
+GO_NESTED = None
 
 
 class LegacyA:
@@ -103,6 +107,8 @@ class ObjexTests(unittest.TestCase):
     def tearDown(self):
         self.stop_event.set()
         self.thread.join(timeout=2)
+        global GO_NESTED
+        GO_NESTED = None
         self.temp_dir.cleanup()
 
     def _make_sample_objects(self):
@@ -127,6 +133,15 @@ class ObjexTests(unittest.TestCase):
         weak_set = weakref.WeakSet()
         weak_set.add(slots_c)
 
+        global GO_NESTED
+        GO_NESTED = types.SimpleNamespace(
+            level1=types.SimpleNamespace(
+                level2=types.SimpleNamespace(
+                    target=deque_obj,
+                ),
+            ),
+        )
+
         return {
             'legacy_a': legacy_a,
             'slots_c': slots_c,
@@ -139,6 +154,7 @@ class ObjexTests(unittest.TestCase):
             'bound_method': bound_method,
             'generator': generator,
             'weak_set': weak_set,
+            'go_nested': GO_NESTED,
         }
 
     def _stacker(self, n=25):
@@ -389,6 +405,16 @@ class ObjexTests(unittest.TestCase):
             assert 'count' in first_item
             assert 'object' in first_item
 
+        status_code, _, body = dispatch_request(str(analysis_path), '/api/go?q=dict')
+        assert status_code == 200
+        go_type_payload = json.loads(body)
+        assert isinstance(go_type_payload['id'], int)
+
+        status_code, _, body = dispatch_request(str(analysis_path), '/api/go?q=builtins')
+        assert status_code == 200
+        go_module_payload = json.loads(body)
+        assert isinstance(go_module_payload['id'], int)
+
         status_code, _, body = dispatch_request(str(analysis_path), '/api/random')
         assert status_code == 200
         random_payload = json.loads(body)
@@ -512,6 +538,19 @@ class ObjexTests(unittest.TestCase):
         assert isinstance(summary['module_paths'], list)
         assert isinstance(summary['frame_roots'], list)
         assert isinstance(summary['frame_paths'], list)
+
+    def test_reader_resolve_go_supports_nested_module_paths(self):
+        base_path = Path(self.temp_dir.name)
+        dump_path = base_path / 'go.db'
+        analysis_path = base_path / 'go-analysis.db'
+        dump_graph(str(dump_path), use_gc=False)
+        make_analysis_db(str(dump_path), str(analysis_path))
+
+        with Reader(str(analysis_path)) as reader:
+            obj_id = reader.resolve_go(__name__ + '.GO_NESTED.level1.level2.target')
+
+            assert reader.obj_typename(obj_id) == 'deque'
+            assert reader.obj_len(obj_id) == 3
 
     def test_console_root_summary(self):
         base_path = Path(self.temp_dir.name)
