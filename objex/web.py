@@ -27,7 +27,6 @@ INDEX_HTML = """<!doctype html>
     <aside id="object-panel" class="panel"></aside>
     <section id="outbound-panel" class="panel"></section>
   </main>
-  <section id="paths-panel" class="panel"></section>
   <section id="discovery-panel" class="panel"></section>
   <section id="root-summary-panel" class="panel"></section>
   <section id="marks-panel" class="panel"></section>
@@ -92,10 +91,14 @@ function renderModulePathLinks(moduleName) {
 
 function renderSummary(summary) {
   document.getElementById('summary').innerHTML = `
-    <div><strong>${escapeHtml(summary.path)}</strong></div>
-    <div>${escapeHtml(summary.hostname)} at ${escapeHtml(summary.timestamp)}</div>
-    <div>${summary.object_count.toLocaleString()} objects, ${summary.reference_count.toLocaleString()} references</div>
-    <div>${summary.memory_mb.toFixed(1)} MiB RSS, ${(summary.visible_memory_fraction * 100).toFixed(1)}% visible</div>
+    <div class="summary-file">${escapeHtml(summary.path)}</div>
+    <div class="summary-meta">
+      <span class="summary-chip">${escapeHtml(summary.hostname)}</span>
+      <span class="summary-chip">${escapeHtml(summary.timestamp)}</span>
+      <span class="summary-chip">${summary.object_count.toLocaleString()} objects</span>
+      <span class="summary-chip">${summary.memory_mb.toFixed(1)} MiB RSS</span>
+      <span class="summary-chip">${(summary.visible_memory_fraction * 100).toFixed(1)}% visible</span>
+    </div>
   `;
 }
 
@@ -198,7 +201,7 @@ function renderMarksPanel(marksPayload) {
   `;
 }
 
-function renderRefs(elementId, title, data, objectFirst = false) {
+function renderRefs(elementId, title, data, objectFirst = false, extraHtml = '') {
   const items = data.items.map(item => `
     <li>
       ${objectFirst ? `${objectLink(item.object)} <span class="edge">${escapeHtml(item.ref)}</span>` : `<span class="edge">${escapeHtml(item.ref)}</span> ${objectLink(item.object)}`}
@@ -207,6 +210,7 @@ function renderRefs(elementId, title, data, objectFirst = false) {
   document.getElementById(elementId).innerHTML = `
     <h2>${title} (${data.count})</h2>
     <ul class="refs">${items || '<li class="empty">No entries</li>'}</ul>
+    ${extraHtml}
   `;
 }
 
@@ -266,10 +270,12 @@ function renderPathGroup(title, items, targetObject) {
 }
 
 function renderPaths(modulePaths, framePaths, targetObject) {
-  document.getElementById('paths-panel').innerHTML = `
-    <h2>Root Paths</h2>
+  return `
+    <div class="paths-section">
+    <h3>Root Paths</h3>
     ${renderPathGroup('Module Paths', modulePaths.items, targetObject)}
     ${renderPathGroup('Frame Paths', framePaths.items, targetObject)}
+    </div>
   `;
 }
 
@@ -312,8 +318,13 @@ async function loadObject(id, pushState = true) {
     renderObjectPanel(obj);
     renderMarksPanel(marks);
     renderRefs('outbound-panel', 'Outbound References', referents);
-    renderRefs('inbound-panel', 'Inbound References', referrers, true);
-    renderPaths(modulePaths, framePaths, obj);
+    renderRefs(
+      'inbound-panel',
+      'Inbound References',
+      referrers,
+      true,
+      renderPaths(modulePaths, framePaths, obj),
+    );
     if (pushState) {
       history.pushState({ id: obj.id }, '', `/?id=${obj.id}`);
     }
@@ -328,7 +339,6 @@ function showLandingPage() {
   document.getElementById('object-panel').innerHTML = '';
   document.getElementById('inbound-panel').innerHTML = '';
   document.getElementById('outbound-panel').innerHTML = '';
-  document.getElementById('paths-panel').innerHTML = '';
 }
 
 async function loadRootSummary(sampleSize = 200, topN = 10) {
@@ -501,6 +511,34 @@ STYLES_CSS = """body {
   border: 1px solid #d7d1c3;
   border-radius: 0.5rem;
 }
+.summary {
+  padding: 0.7rem 1rem;
+}
+.summary-file {
+  font-family: ui-monospace, monospace;
+  font-weight: 700;
+  margin-bottom: 0.45rem;
+  word-break: break-word;
+}
+.summary-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+.summary-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.18rem 0.45rem;
+  border-radius: 999px;
+  background: #efe7d8;
+  color: #5a4632;
+  font-size: 0.92rem;
+  line-height: 1.2;
+}
+.panel:empty,
+.message:empty {
+  display: none;
+}
 .loading {
   display: flex;
   align-items: center;
@@ -531,8 +569,7 @@ STYLES_CSS = """body {
   grid-template-columns: 1.2fr 1fr 1.2fr;
   gap: 0;
 }
-body.landing-mode .layout,
-body.landing-mode #paths-panel {
+body.landing-mode .layout {
   display: none;
 }
 body.object-mode #discovery-panel,
@@ -638,6 +675,11 @@ body.landing-mode #search-results:empty {
 }
 .empty { color: #6b7280; }
 .path-group + .path-group { margin-top: 1rem; }
+.paths-section {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #eee6d7;
+}
 .path-row {
   line-height: 1.8;
   word-break: break-word;
