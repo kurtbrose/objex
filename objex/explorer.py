@@ -1038,10 +1038,13 @@ class Reader:
     def object_ref_path_data(self, path):
         items = []
         for obj_id, ref in path:
-            items.append({
+            item = {
                 'object': self.object_summary(obj_id),
                 'ref': ref,
-            })
+            }
+            if ref.startswith('@') and ref[1:].isdigit():
+                item['ref_object'] = self.object_summary(int(ref[1:]))
+            items.append(item)
         return items
 
     def path_to_module_data(self, obj_id, limit=20):

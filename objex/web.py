@@ -76,6 +76,10 @@ function displayLabel(label) {
   return label;
 }
 
+function displayPathObjectLabel(label) {
+  return displayLabel(label).replace(/#\\d+$/, '');
+}
+
 function renderModulePathLinks(moduleName) {
   const segments = moduleName.split('.');
   const parts = [];
@@ -220,13 +224,37 @@ function renderSearchResults(items) {
   `;
 }
 
-function renderPathGroup(title, items) {
+function pathSegmentLink(targetObject, text) {
+  return `<a class="sequence-link" href="/?id=${encodeURIComponent(targetObject.id)}" data-object-id="${targetObject.id}">${text}</a>`;
+}
+
+function renderPathExpression(path, targetObject) {
+  if (!path.length) {
+    return '';
+  }
+  let html = `<span class="path-root">${escapeHtml(displayPathObjectLabel(path[0].object.label))}</span>`;
+  for (let i = 0; i < path.length; i += 1) {
+    const step = path[i];
+    const nextObject = i + 1 < path.length ? path[i + 1].object : targetObject;
+    let segmentText = escapeHtml(step.ref);
+    if (step.ref.startsWith('@')) {
+      const keyLabel = step.ref_object
+        ? displayPathObjectLabel(step.ref_object.label)
+        : step.ref.slice(1);
+      segmentText = `[${escapeHtml(keyLabel)}]`;
+    }
+    html += pathSegmentLink(nextObject, segmentText);
+  }
+  return html;
+}
+
+function renderPathGroup(title, items, targetObject) {
   if (!items.length) {
     return `<div class="path-group"><h3>${title}</h3><div class="empty">No paths found</div></div>`;
   }
   const rendered = items.map(path => `
     <li class="path-row">
-      ${path.map(step => `${objectLink(step.object)} <span class="edge">${escapeHtml(step.ref)}</span>`).join('')}
+      ${renderPathExpression(path, targetObject)}
     </li>
   `).join('');
   return `
@@ -237,11 +265,11 @@ function renderPathGroup(title, items) {
   `;
 }
 
-function renderPaths(modulePaths, framePaths) {
+function renderPaths(modulePaths, framePaths, targetObject) {
   document.getElementById('paths-panel').innerHTML = `
     <h2>Root Paths</h2>
-    ${renderPathGroup('Module Paths', modulePaths.items)}
-    ${renderPathGroup('Frame Paths', framePaths.items)}
+    ${renderPathGroup('Module Paths', modulePaths.items, targetObject)}
+    ${renderPathGroup('Frame Paths', framePaths.items, targetObject)}
   `;
 }
 
@@ -285,7 +313,7 @@ async function loadObject(id, pushState = true) {
     renderMarksPanel(marks);
     renderRefs('outbound-panel', 'Outbound References', referents);
     renderRefs('inbound-panel', 'Inbound References', referrers, true);
-    renderPaths(modulePaths, framePaths);
+    renderPaths(modulePaths, framePaths, obj);
     if (pushState) {
       history.pushState({ id: obj.id }, '', `/?id=${obj.id}`);
     }
@@ -565,6 +593,18 @@ body.landing-mode #search-results:empty {
 .path-sep {
   color: #8a4b08;
   margin: 0 0.12rem;
+}
+.path-root {
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+}
+.sequence-link {
+  color: #8a4b08;
+  text-decoration: none;
+  font-family: ui-monospace, monospace;
+}
+.sequence-link:hover {
+  text-decoration: underline;
 }
 .meta {
   display: grid;
