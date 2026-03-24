@@ -91,6 +91,40 @@ def _ensure_analysis_meta_columns(conn):
         conn.execute("ALTER TABLE meta ADD COLUMN immortal_object_count INTEGER")
 
 
+def _build_attributed_size_table(conn):
+    conn.execute("DROP TABLE IF EXISTS object_attributed_size")
+    conn.execute(
+        """
+        CREATE TABLE object_attributed_size (
+            object INTEGER PRIMARY KEY,
+            attributed_size INTEGER NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO object_attributed_size (object, attributed_size)
+        SELECT
+            object.id,
+            object.size
+            + COALESCE((
+                SELECT SUM(dict_object.size)
+                FROM reference
+                JOIN object AS dict_object ON dict_object.id = reference.dst
+                WHERE reference.src = object.id AND reference.ref = '.__dict__'
+            ), 0)
+            - CASE WHEN EXISTS (
+                SELECT 1 FROM reference
+                WHERE reference.dst = object.id AND reference.ref = '.__dict__'
+            ) THEN object.size ELSE 0 END
+        FROM object
+        """
+    )
+    conn.execute(
+        "CREATE INDEX object_attributed_size_size ON object_attributed_size(attributed_size)"
+    )
+
+
 def _detect_immortal_refcount(conn, min_refcount=1_000_000_000, min_count=5):
     row = conn.execute(
         """
@@ -134,6 +168,7 @@ def make_analysis_db(collection_db_path, analysis_db_path):
         _ensure_analysis_meta_columns(conn)
         _run_ddl(conn, _INDICES)
         _add_class_references(conn)
+        _build_attributed_size_table(conn)
         immortal_refcount, immortal_object_count = _detect_immortal_refcount(conn)
         conn.execute(
             "UPDATE meta SET immortal_refcount = ?, immortal_object_count = ?",
@@ -163,6 +198,13 @@ class Reader:
         self._meta_columns = {
             row[1] for row in self.conn.execute("PRAGMA table_info(meta)")
         }
+        self._table_names = {
+            row[0] for row in self.conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        if 'object_attributed_size' not in self._table_names:
+            _build_attributed_size_table(self.conn)
+            self.conn.commit()
+            self._table_names.add('object_attributed_size')
         self._root_object_path_cache = {'module': {}, 'frame': {}}
         self._root_cache_hits = {'module': 0, 'frame': 0}
         self._immortal_refcount = _MISSING
@@ -228,6 +270,20 @@ class Reader:
 
     def cost_by_type(self, limit=20):
         '''get (typename, percent memory, number of instances) ordered by percent memory'''
+        if 'object_attributed_size' in self._table_names:
+            return self.sql(
+                """
+                SELECT
+                    name,
+                    count(*),
+                    100 * sum(object_attributed_size.attributed_size) / (1.0 * (SELECT sum(size) FROM object))
+                FROM object
+                JOIN pytype ON object.pytype = pytype.object
+                JOIN object_attributed_size ON object.id = object_attributed_size.object
+                GROUP BY name ORDER BY sum(object_attributed_size.attributed_size) DESC LIMIT ?
+                """,
+                (limit,),
+            )
         return self.sql(
             """
             SELECT name, count(*), 100 * sum(size) / (1.0 * (SELECT sum(size) FROM object))
@@ -801,6 +857,16 @@ class Reader:
 
     def largest_objects(self, limit=20):
         """get the largest objects (by sizeof)"""
+        if 'object_attributed_size' in self._table_names:
+            return self.sql(
+                """
+                SELECT object_attributed_size.attributed_size, object.id
+                FROM object
+                JOIN object_attributed_size ON object.id = object_attributed_size.object
+                ORDER BY object_attributed_size.attributed_size DESC LIMIT ?
+                """,
+                (limit,),
+            )
         return self.sql("SELECT size, id FROM object ORDER BY size DESC LIMIT ?", (limit,))
 
     def most_referenced_objects(self, limit=20):
@@ -976,15 +1042,27 @@ class Reader:
             name = self.obj_typequalname(obj_id)
         return '<{}{}#{}>'.format(name, mark_label, obj_id)
 
+    def obj_attributed_size(self, obj_id):
+        if 'object_attributed_size' not in self._table_names:
+            return self.obj_size(obj_id)
+        return self.sql_val(
+            'SELECT attributed_size FROM object_attributed_size WHERE object = ?',
+            (obj_id,),
+            default=self.obj_size(obj_id),
+        )
+
     def object_summary(self, obj_id):
         refcount = self.obj_refcount(obj_id)
+        size = self.obj_size(obj_id)
+        attributed_size = self.obj_attributed_size(obj_id)
         return {
             'id': obj_id,
             'label': self.object_label(obj_id),
             'type_id': self.obj_type(obj_id),
             'typename': self.obj_typename(obj_id),
             'typequalname': self.obj_typequalname(obj_id),
-            'size': self.obj_size(obj_id),
+            'size': size,
+            'attributed_size': attributed_size,
             'refcount': refcount,
             'refcount_display': self.format_refcount(refcount),
             'len': self.obj_len(obj_id),

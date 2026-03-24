@@ -225,6 +225,44 @@ class ObjexTests(unittest.TestCase):
                     conn.close()
                 assert 'reference_src' in index_names
 
+    def test_analysis_db_attributes_instance_dict_size_to_instance(self):
+        base_path = Path(self.temp_dir.name)
+        dump_path = base_path / 'attributed-size.db'
+        analysis_path = base_path / 'attributed-size-analysis.db'
+        dump_graph(str(dump_path), use_gc=False)
+        make_analysis_db(str(dump_path), str(analysis_path))
+
+        with Reader(str(analysis_path)) as reader:
+            legacy_type_id = reader.find_type_by_name('LegacyA')[0]
+            legacy_instance_id = reader.random_instances(legacy_type_id, limit=1)[0]
+            legacy_dict_id = reader.sql_val(
+                "SELECT dst FROM reference WHERE src = ? AND ref = '.__dict__'",
+                (legacy_instance_id,),
+            )
+
+            assert reader.obj_attributed_size(legacy_instance_id) > reader.obj_size(legacy_instance_id)
+            assert reader.obj_attributed_size(legacy_dict_id) == 0
+
+    def test_reader_rebuilds_missing_attributed_size_table(self):
+        base_path = Path(self.temp_dir.name)
+        dump_path = base_path / 'legacy-analysis-source.db'
+        analysis_path = base_path / 'legacy-analysis.db'
+        dump_graph(str(dump_path), use_gc=False)
+        make_analysis_db(str(dump_path), str(analysis_path))
+
+        conn = sqlite3.connect(str(analysis_path))
+        try:
+            conn.execute('DROP TABLE object_attributed_size')
+            conn.commit()
+        finally:
+            conn.close()
+
+        with Reader(str(analysis_path)) as reader:
+            legacy_type_id = reader.find_type_by_name('LegacyA')[0]
+            legacy_instance_id = reader.random_instances(legacy_type_id, limit=1)[0]
+            assert reader.obj_attributed_size(legacy_instance_id) >= reader.obj_size(legacy_instance_id)
+            assert 'object_attributed_size' in reader._table_names
+
     def test_dump_graph_reconciles_wal_into_main_db(self):
         dump_path = Path(self.temp_dir.name) / 'portable.db'
 
