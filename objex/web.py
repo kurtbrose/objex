@@ -22,6 +22,7 @@ INDEX_HTML = """<!doctype html>
     <button id="random-btn" type="button">Random</button>
   </header>
   <section id="summary" class="summary"></section>
+  <section id="loading" class="loading hidden"></section>
   <section id="message" class="message"></section>
   <section id="discovery-panel" class="panel"></section>
   <section id="marks-panel" class="panel"></section>
@@ -38,19 +39,24 @@ INDEX_HTML = """<!doctype html>
 """
 
 
-APP_JS = """const state = { currentObjectId: null };
+APP_JS = """const state = { currentObjectId: null, loadingCount: 0 };
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>\\"]/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '\\"': '&quot;'}[ch]));
 }
 
 async function fetchJson(url) {
+  setLoading(true);
   const response = await fetch(url);
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.error || `Request failed: ${response.status}`);
+  try {
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || `Request failed: ${response.status}`);
+    }
+    return payload;
+  } finally {
+    setLoading(false);
   }
-  return payload;
 }
 
 function objectLink(obj) {
@@ -185,6 +191,25 @@ function renderPaths(modulePaths, framePaths) {
 
 function setMessage(message) {
   document.getElementById('message').textContent = message || '';
+}
+
+function setLoading(isLoading) {
+  if (isLoading) {
+    state.loadingCount += 1;
+  } else {
+    state.loadingCount = Math.max(0, state.loadingCount - 1);
+  }
+  const el = document.getElementById('loading');
+  if (!el) {
+    return;
+  }
+  if (state.loadingCount > 0) {
+    el.classList.remove('hidden');
+    el.innerHTML = '<span class="spinner" aria-hidden="true"></span><span>Loading…</span>';
+  } else {
+    el.classList.add('hidden');
+    el.innerHTML = '';
+  }
 }
 
 async function loadObject(id, pushState = true) {
@@ -339,6 +364,31 @@ STYLES_CSS = """body {
   background: #fffdf8;
   border: 1px solid #d7d1c3;
   border-radius: 0.5rem;
+}
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin: 1rem;
+  padding: 0.75rem 1rem;
+  background: #f9f1df;
+  border: 1px solid #d7c5a1;
+  border-radius: 0.5rem;
+  color: #7a4b10;
+}
+.hidden {
+  display: none;
+}
+.spinner {
+  width: 0.95rem;
+  height: 0.95rem;
+  border: 2px solid #d7c5a1;
+  border-top-color: #8a4b08;
+  border-radius: 999px;
+  animation: spin 0.85s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 .layout {
   display: grid;
