@@ -65,6 +65,22 @@ function pathLink(path, label) {
   return `<a class="object-link path-link" href="/?q=${encodeURIComponent(path)}" data-go-query="${escapeHtml(path)}">${escapeHtml(label)}</a>`;
 }
 
+function chartTargetAttrs(item, labelKey = 'label') {
+  if (item.object) {
+    return `href="/?id=${encodeURIComponent(item.object.id)}" data-object-id="${item.object.id}"`;
+  }
+  if (item.type_id) {
+    return `href="/?id=${encodeURIComponent(item.type_id)}" data-object-id="${item.type_id}"`;
+  }
+  if (labelKey === 'name' && item.name) {
+    return `href="/?q=${encodeURIComponent(item.name)}" data-go-query="${escapeHtml(item.name)}"`;
+  }
+  if (item[labelKey]) {
+    return `href="/?q=${encodeURIComponent(item[labelKey])}" data-go-query="${escapeHtml(item[labelKey])}"`;
+  }
+  return '';
+}
+
 function displayLabel(label) {
   if (!label) {
     return '';
@@ -130,6 +146,9 @@ function renderPercentStackedBar(title, items, valueKey, labelKey = 'label') {
   const chartItems = leading.map(item => ({
     label: item[labelKey],
     value: item[valueKey],
+    object: item.object,
+    type_id: item.type_id,
+    name: item.name,
   }));
   if (otherValue >= 0.1) {
     chartItems.push({label: 'Other', value: otherValue});
@@ -140,13 +159,17 @@ function renderPercentStackedBar(title, items, valueKey, labelKey = 'label') {
     const width = item.value;
     const label = `${item.label}: ${item.value.toFixed(1)}%`;
     const visibleText = `${item.value.toFixed(1)}% ${item.label}`;
-    const text = width >= 16 ? `<text x="${x + 1.2}%" y="50%" text-anchor="start" dominant-baseline="middle" class="stacked-bar-text">${escapeHtml(visibleText)}</text>` : '';
+    const estimatedWidth = Math.max(8, visibleText.length * 0.75);
+    const text = width >= estimatedWidth ? `<text x="${x + 1.2}%" y="50%" text-anchor="start" dominant-baseline="middle" class="stacked-bar-text">${escapeHtml(visibleText)}</text>` : '';
+    const targetAttrs = chartTargetAttrs(item, 'label');
+    const openTag = targetAttrs ? `<a class="stacked-bar-segment" ${targetAttrs}>` : '<g>';
+    const closeTag = targetAttrs ? '</a>' : '</g>';
     const segment = `
-      <g>
+      ${openTag}
         <title>${escapeHtml(label)}</title>
         <rect x="${x}%" y="0" width="${width}%" height="28" fill="${chartColor(index)}" rx="1" ry="1"></rect>
         ${text}
-      </g>
+      ${closeTag}
     `;
     x += width;
     return segment;
@@ -162,11 +185,66 @@ function renderPercentStackedBar(title, items, valueKey, labelKey = 'label') {
   `;
 }
 
-function renderDiscovery(topTypes, largestObjects) {
+function renderTopTypeMemoryBar(summary, topTypes) {
+  const visiblePercent = (summary.visible_memory_fraction || 0) * 100;
+  if (!topTypes.items.length && visiblePercent <= 0) {
+    return '';
+  }
+
+  const maxSegments = 5;
+  const leading = topTypes.items.slice(0, maxSegments).map(item => ({
+    label: item.name,
+    value: item.memory_percent * (summary.visible_memory_fraction || 0),
+    type_id: item.type_id,
+    name: item.name,
+  }));
+  const shownValue = leading.reduce((sum, item) => sum + item.value, 0);
+  const otherValue = Math.max(0, visiblePercent - shownValue);
+  const unknownValue = Math.max(0, 100 - visiblePercent);
+  const chartItems = [...leading];
+  if (otherValue >= 0.1) {
+    chartItems.push({label: 'Other', value: otherValue});
+  }
+  if (unknownValue >= 0.1) {
+    chartItems.push({label: 'Unknown', value: unknownValue});
+  }
+
+  let x = 0;
+  const segments = chartItems.map((item, index) => {
+    const width = item.value;
+    const label = `${item.label}: ${item.value.toFixed(1)}% of RSS`;
+    const visibleText = `${item.value.toFixed(1)}% ${item.label}`;
+    const estimatedWidth = Math.max(8, visibleText.length * 0.75);
+    const text = width >= estimatedWidth ? `<text x="${x + 1.2}%" y="50%" text-anchor="start" dominant-baseline="middle" class="stacked-bar-text">${escapeHtml(visibleText)}</text>` : '';
+    const targetAttrs = chartTargetAttrs(item, 'label');
+    const openTag = targetAttrs ? `<a class="stacked-bar-segment" ${targetAttrs}>` : '<g>';
+    const closeTag = targetAttrs ? '</a>' : '</g>';
+    const segment = `
+      ${openTag}
+        <title>${escapeHtml(label)}</title>
+        <rect x="${x}%" y="0" width="${width}%" height="28" fill="${chartColor(index)}" rx="1" ry="1"></rect>
+        ${text}
+      ${closeTag}
+    `;
+    x += width;
+    return segment;
+  }).join('');
+
+  return `
+    <div class="stacked-bar-card">
+      <div class="stacked-bar-title">Memory By Type</div>
+      <svg class="stacked-bar" width="100%" height="28" aria-label="Memory By Type">
+        ${segments}
+      </svg>
+    </div>
+  `;
+}
+
+function renderDiscovery(summary, topTypes, largestObjects) {
   document.getElementById('discovery-panel').innerHTML = `
     <h2>Discovery</h2>
     <div class="stacked-bars">
-      ${renderPercentStackedBar('Top Type Mix', topTypes.items, 'memory_percent', 'name')}
+      ${renderTopTypeMemoryBar(summary, topTypes)}
     </div>
     <div class="discovery-grid">
       <div>
@@ -216,13 +294,17 @@ function renderStackedBar(title, items, sampleSize) {
     const width = item.count / total * 100;
     const label = `${item.label}: ${item.count} (${(item.count / total * 100).toFixed(1)}%)`;
     const visibleText = `${item.count} ${item.label}`;
-    const text = width >= 16 ? `<text x="${x + 1.2}%" y="50%" text-anchor="start" dominant-baseline="middle" class="stacked-bar-text">${escapeHtml(visibleText)}</text>` : '';
+    const estimatedWidth = Math.max(8, visibleText.length * 0.75);
+    const text = width >= estimatedWidth ? `<text x="${x + 1.2}%" y="50%" text-anchor="start" dominant-baseline="middle" class="stacked-bar-text">${escapeHtml(visibleText)}</text>` : '';
+    const targetAttrs = chartTargetAttrs(item, 'label');
+    const openTag = targetAttrs ? `<a class="stacked-bar-segment" ${targetAttrs}>` : '<g>';
+    const closeTag = targetAttrs ? '</a>' : '</g>';
     const segment = `
-      <g>
+      ${openTag}
         <title>${escapeHtml(label)}</title>
         <rect x="${x}%" y="0" width="${width}%" height="28" fill="${chartColor(index)}" rx="1" ry="1"></rect>
         ${text}
-      </g>
+      ${closeTag}
     `;
     x += width;
     return segment;
@@ -454,7 +536,7 @@ async function init() {
     fetchJson('/api/largest-objects?limit=12')
   ]);
   renderSummary(summary);
-  renderDiscovery(topTypes, largestObjects);
+  renderDiscovery(summary, topTypes, largestObjects);
   loadRootSummary();
   showLandingPage();
 
