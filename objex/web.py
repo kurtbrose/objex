@@ -119,9 +119,54 @@ function renderRootSummaryList(title, items) {
   `;
 }
 
+function renderPercentStackedBar(title, items, valueKey, labelKey = 'label') {
+  if (!items.length) {
+    return '';
+  }
+  const maxSegments = 5;
+  const leading = items.slice(0, maxSegments);
+  const shownValue = leading.reduce((sum, item) => sum + item[valueKey], 0);
+  const otherValue = Math.max(0, 100 - shownValue);
+  const chartItems = leading.map(item => ({
+    label: item[labelKey],
+    value: item[valueKey],
+  }));
+  if (otherValue >= 0.1) {
+    chartItems.push({label: 'Other', value: otherValue});
+  }
+
+  let x = 0;
+  const segments = chartItems.map((item, index) => {
+    const width = item.value;
+    const label = `${item.label}: ${item.value.toFixed(1)}%`;
+    const text = width >= 14 ? `<text x="${x + width / 2}" y="16" text-anchor="middle" class="stacked-bar-text">${escapeHtml(item.label)}</text>` : '';
+    const segment = `
+      <g>
+        <title>${escapeHtml(label)}</title>
+        <rect x="${x}" y="0" width="${width}" height="24" fill="${chartColor(index)}" rx="0.8" ry="0.8"></rect>
+        ${text}
+      </g>
+    `;
+    x += width;
+    return segment;
+  }).join('');
+
+  return `
+    <div class="stacked-bar-card">
+      <div class="stacked-bar-title">${title}</div>
+      <svg class="stacked-bar" viewBox="0 0 100 24" preserveAspectRatio="none" aria-label="${escapeHtml(title)}">
+        ${segments}
+      </svg>
+    </div>
+  `;
+}
+
 function renderDiscovery(topTypes, largestObjects) {
   document.getElementById('discovery-panel').innerHTML = `
     <h2>Discovery</h2>
+    <div class="stacked-bars">
+      ${renderPercentStackedBar('Top Type Mix', topTypes.items, 'memory_percent', 'name')}
+    </div>
     <div class="discovery-grid">
       <div>
         <h3>Top Types</h3>
@@ -146,6 +191,51 @@ function renderRootSummaryLoading(sampleSize) {
   `;
 }
 
+function chartColor(index) {
+  const colors = ['#b76e23', '#3b5f8a', '#7d8f4e', '#8b4b72', '#c47f17', '#4d7a73', '#a6552f', '#6d6aa8'];
+  return colors[index % colors.length];
+}
+
+function renderStackedBar(title, items, sampleSize) {
+  const total = sampleSize || items.reduce((sum, item) => sum + item.count, 0);
+  if (!items.length || !total) {
+    return '';
+  }
+  const maxSegments = 5;
+  const leading = items.slice(0, maxSegments);
+  const shownCount = leading.reduce((sum, item) => sum + item.count, 0);
+  const otherCount = Math.max(0, total - shownCount);
+  const chartItems = [...leading];
+  if (otherCount) {
+    chartItems.push({label: 'Other', count: otherCount});
+  }
+
+  let x = 0;
+  const segments = chartItems.map((item, index) => {
+    const width = item.count / total * 100;
+    const label = `${item.label}: ${item.count} (${(item.count / total * 100).toFixed(1)}%)`;
+    const text = width >= 14 ? `<text x="${x + width / 2}" y="16" text-anchor="middle" class="stacked-bar-text">${escapeHtml(item.label)}</text>` : '';
+    const segment = `
+      <g>
+        <title>${escapeHtml(label)}</title>
+        <rect x="${x}" y="0" width="${width}" height="24" fill="${chartColor(index)}" rx="0.8" ry="0.8"></rect>
+        ${text}
+      </g>
+    `;
+    x += width;
+    return segment;
+  }).join('');
+
+  return `
+    <div class="stacked-bar-card">
+      <div class="stacked-bar-title">${title}</div>
+      <svg class="stacked-bar" viewBox="0 0 100 24" preserveAspectRatio="none" aria-label="${escapeHtml(title)}">
+        ${segments}
+      </svg>
+    </div>
+  `;
+}
+
 function renderRootSummary(rootSummary) {
   document.getElementById('root-summary-panel').innerHTML = `
     <div class="panel-header">
@@ -153,6 +243,10 @@ function renderRootSummary(rootSummary) {
       <button id="reload-root-summary" type="button">Refresh</button>
     </div>
     <div class="subtle">Sampled ${rootSummary.sample_size} random objects</div>
+    <div class="stacked-bars">
+      ${renderStackedBar('Module Root Mix', rootSummary.module_roots, rootSummary.sample_size)}
+      ${renderStackedBar('Frame Root Mix', rootSummary.frame_roots, rootSummary.sample_size)}
+    </div>
     <div class="discovery-grid">
       ${renderRootSummaryList('Module Roots', rootSummary.module_roots)}
       ${renderRootSummaryList('Module Paths', rootSummary.module_paths)}
@@ -604,6 +698,35 @@ body.landing-mode #search-results:empty {
   grid-template-columns: 1fr 1fr;
   gap: 1rem;
 }
+.stacked-bars {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+.stacked-bar-card {
+  background: #f7f1e5;
+  border: 1px solid #e7dcc8;
+  border-radius: 0.5rem;
+  padding: 0.65rem 0.75rem 0.75rem;
+}
+.stacked-bar-title {
+  font-size: 0.92rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+.stacked-bar {
+  width: 100%;
+  height: 1.5rem;
+  display: block;
+}
+.stacked-bar-text {
+  fill: #fffdf8;
+  font-size: 5px;
+  dominant-baseline: middle;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  pointer-events: none;
+}
 .refs {
   list-style: none;
   padding: 0;
@@ -687,6 +810,7 @@ body.landing-mode #search-results:empty {
 @media (max-width: 980px) {
   .layout { grid-template-columns: 1fr; }
   .discovery-grid { grid-template-columns: 1fr; }
+  .stacked-bars { grid-template-columns: 1fr; }
   .topbar { flex-wrap: wrap; }
   .topbar input { min-width: 10rem; }
 }
