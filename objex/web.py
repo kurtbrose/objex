@@ -91,8 +91,8 @@ function renderModulePathLinks(moduleName) {
 
 function renderSummary(summary) {
   document.getElementById('summary').innerHTML = `
-    <div class="summary-file">${escapeHtml(summary.path)}</div>
     <div class="summary-meta">
+      <span class="summary-chip summary-path">${escapeHtml(summary.path)}</span>
       <span class="summary-chip">${escapeHtml(summary.hostname)}</span>
       <span class="summary-chip">${escapeHtml(summary.timestamp)}</span>
       <span class="summary-chip">${summary.object_count.toLocaleString()} objects</span>
@@ -514,12 +514,6 @@ STYLES_CSS = """body {
 .summary {
   padding: 0.7rem 1rem;
 }
-.summary-file {
-  font-family: ui-monospace, monospace;
-  font-weight: 700;
-  margin-bottom: 0.45rem;
-  word-break: break-word;
-}
 .summary-meta {
   display: flex;
   flex-wrap: wrap;
@@ -534,6 +528,12 @@ STYLES_CSS = """body {
   color: #5a4632;
   font-size: 0.92rem;
   line-height: 1.2;
+}
+.summary-path {
+  font-family: ui-monospace, monospace;
+  font-weight: 700;
+  max-width: 100%;
+  word-break: break-word;
 }
 .panel:empty,
 .message:empty {
