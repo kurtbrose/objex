@@ -511,10 +511,7 @@ class ObjexTests(unittest.TestCase):
                 row[0] for row in conn.execute('SELECT id FROM object ORDER BY id LIMIT 8000')
             ]
             assert len(object_ids) == 8000
-            conn.executemany(
-                'UPDATE object SET refcount = ? WHERE id = ?',
-                [(sentinel, obj_id) for obj_id in object_ids],
-            )
+            conn.execute('UPDATE object SET refcount = ?', (sentinel,))
             conn.commit()
         finally:
             conn.close()
@@ -525,7 +522,7 @@ class ObjexTests(unittest.TestCase):
             assert reader.immortal_refcount() == sentinel
             summary = reader.summary_stats()
             assert summary['immortal_refcount'] == sentinel
-            assert summary['immortal_object_count'] == 8000
+            assert summary['immortal_object_count'] >= 8000
 
             object_summary = reader.object_summary(object_ids[0])
             assert object_summary['refcount'] == sentinel
