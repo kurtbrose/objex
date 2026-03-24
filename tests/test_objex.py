@@ -375,6 +375,15 @@ class ObjexTests(unittest.TestCase):
         assert 'items' in largest_objects_payload
         assert largest_objects_payload['items']
 
+        status_code, _, body = dispatch_request(
+            str(analysis_path), '/api/root-summary?sample_size=25&top_n=5'
+        )
+        assert status_code == 200
+        root_summary_payload = json.loads(body)
+        assert root_summary_payload['sample_size'] == 25
+        assert 'module_roots' in root_summary_payload
+        assert 'frame_roots' in root_summary_payload
+
         status_code, _, body = dispatch_request(str(analysis_path), '/api/random')
         assert status_code == 200
         random_payload = json.loads(body)
@@ -418,6 +427,48 @@ class ObjexTests(unittest.TestCase):
         assert status_code == 200
         frame_paths_payload = json.loads(body)
         assert 'items' in frame_paths_payload
+
+    def test_analysis_db_detects_immortal_refcount_sentinel(self):
+        base_path = Path(self.temp_dir.name)
+        dump_path = base_path / 'immortal.db'
+        analysis_path = base_path / 'immortal-analysis.db'
+        sentinel = 3_221_225_469
+
+        dump_graph(str(dump_path), use_gc=False)
+
+        conn = sqlite3.connect(str(dump_path))
+        try:
+            object_ids = [
+                row[0] for row in conn.execute('SELECT id FROM object ORDER BY id LIMIT 8000')
+            ]
+            assert len(object_ids) == 8000
+            conn.executemany(
+                'UPDATE object SET refcount = ? WHERE id = ?',
+                [(sentinel, obj_id) for obj_id in object_ids],
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        make_analysis_db(str(dump_path), str(analysis_path))
+
+        with Reader(str(analysis_path)) as reader:
+            assert reader.immortal_refcount() == sentinel
+            summary = reader.summary_stats()
+            assert summary['immortal_refcount'] == sentinel
+            assert summary['immortal_object_count'] == 8000
+
+            object_summary = reader.object_summary(object_ids[0])
+            assert object_summary['refcount'] == sentinel
+            assert object_summary['refcount_display'] == 'immortal'
+
+        status_code, _, body = dispatch_request(
+            str(analysis_path), '/api/object?id={}'.format(object_ids[0])
+        )
+        assert status_code == 200
+        object_payload = json.loads(body)
+        assert object_payload['refcount'] == sentinel
+        assert object_payload['refcount_display'] == 'immortal'
 
     def test_console_commands_validate_missing_args(self):
         base_path = Path(self.temp_dir.name)

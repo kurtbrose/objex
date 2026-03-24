@@ -66,7 +66,18 @@ function renderSummary(summary) {
   `;
 }
 
-function renderDiscovery(topTypes, largestObjects) {
+function renderRootSummaryList(title, items) {
+  return `
+    <div>
+      <h3>${title}</h3>
+      <ul class="refs">
+        ${(items || []).length ? items.map(item => `<li><span class="edge">${item[1]}</span>${escapeHtml(item[0])}</li>`).join('') : '<li class="empty">No entries</li>'}
+      </ul>
+    </div>
+  `;
+}
+
+function renderDiscovery(topTypes, largestObjects, rootSummary) {
   document.getElementById('discovery-panel').innerHTML = `
     <h2>Discovery</h2>
     <div class="discovery-grid">
@@ -82,6 +93,10 @@ function renderDiscovery(topTypes, largestObjects) {
           ${largestObjects.items.map(item => `<li>${objectLink(item.object)} <span class="type">${escapeHtml(item.object.typequalname)}</span> <span class="edge">${item.size} bytes</span></li>`).join('')}
         </ul>
       </div>
+      ${renderRootSummaryList('Sampled Module Roots', rootSummary.module_roots)}
+      ${renderRootSummaryList('Sampled Module Paths', rootSummary.module_paths)}
+      ${renderRootSummaryList('Sampled Frame Roots', rootSummary.frame_roots)}
+      ${renderRootSummaryList('Sampled Frame Paths', rootSummary.frame_paths)}
     </div>
   `;
 }
@@ -99,7 +114,7 @@ function renderObjectPanel(obj) {
       <dt>ID</dt><dd>${obj.id}</dd>
       <dt>Type</dt><dd>${escapeHtml(obj.typequalname)}</dd>
       <dt>Size</dt><dd>${obj.size}</dd>
-      <dt>Refcount</dt><dd>${obj.refcount}</dd>
+      <dt>Refcount</dt><dd>${escapeHtml(obj.refcount_display ?? String(obj.refcount))}</dd>
       <dt>Len</dt><dd>${obj.len ?? ''}</dd>
     </dl>
   `;
@@ -198,13 +213,14 @@ async function loadObject(id, pushState = true) {
 }
 
 async function init() {
-  const [summary, topTypes, largestObjects] = await Promise.all([
+  const [summary, topTypes, largestObjects, rootSummary] = await Promise.all([
     fetchJson('/api/summary'),
     fetchJson('/api/top-types?limit=12'),
-    fetchJson('/api/largest-objects?limit=12')
+    fetchJson('/api/largest-objects?limit=12'),
+    fetchJson('/api/root-summary?sample_size=500&top_n=10')
   ]);
   renderSummary(summary);
-  renderDiscovery(topTypes, largestObjects);
+  renderDiscovery(topTypes, largestObjects, rootSummary);
 
   const params = new URLSearchParams(window.location.search);
   const id = params.get('id');
@@ -459,6 +475,13 @@ def dispatch_request(db_path, path):
             if parsed.path == '/api/largest-objects':
                 return 200, 'application/json; charset=utf-8', _json_bytes(
                     {'items': reader.largest_objects_data(limit=_int_param(query, 'limit', 20))}
+                )
+            if parsed.path == '/api/root-summary':
+                return 200, 'application/json; charset=utf-8', _json_bytes(
+                    reader.sampled_root_summary(
+                        sample_size=_int_param(query, 'sample_size', 500),
+                        top_n=_int_param(query, 'top_n', 10),
+                    )
                 )
             if parsed.path == '/api/path-to-module':
                 return 200, 'application/json; charset=utf-8', _json_bytes(

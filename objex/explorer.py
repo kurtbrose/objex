@@ -81,6 +81,36 @@ def _reconcile_source_wal(conn):
         conn.commit()
 
 
+def _ensure_analysis_meta_columns(conn):
+    meta_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(meta)")
+    }
+    if 'immortal_refcount' not in meta_columns:
+        conn.execute("ALTER TABLE meta ADD COLUMN immortal_refcount INTEGER")
+    if 'immortal_object_count' not in meta_columns:
+        conn.execute("ALTER TABLE meta ADD COLUMN immortal_object_count INTEGER")
+
+
+def _detect_immortal_refcount(conn, min_refcount=1_000_000_000, min_count=5):
+    row = conn.execute(
+        """
+        SELECT refcount, count(*)
+        FROM object
+        WHERE refcount >= ?
+        GROUP BY refcount
+        ORDER BY count(*) DESC, refcount DESC
+        LIMIT 1
+        """,
+        (min_refcount,),
+    ).fetchone()
+    if not row:
+        return None, 0
+    refcount, object_count = row
+    if object_count < min_count:
+        return None, object_count
+    return refcount, object_count
+
+
 def make_analysis_db(collection_db_path, analysis_db_path):
     '''
     make an analysis SQLite DB from a collection SQLite DB
@@ -101,8 +131,14 @@ def make_analysis_db(collection_db_path, analysis_db_path):
         _reconcile_source_wal(source_conn)
         _validate_objex_db(source_conn, collection_db_path)
         source_conn.backup(conn)
+        _ensure_analysis_meta_columns(conn)
         _run_ddl(conn, _INDICES)
         _add_class_references(conn)
+        immortal_refcount, immortal_object_count = _detect_immortal_refcount(conn)
+        conn.execute(
+            "UPDATE meta SET immortal_refcount = ?, immortal_object_count = ?",
+            (immortal_refcount, immortal_object_count),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -124,8 +160,12 @@ class Reader:
             conn.close()
             raise
         self.conn = conn
+        self._meta_columns = {
+            row[1] for row in self.conn.execute("PRAGMA table_info(meta)")
+        }
         self._root_object_path_cache = {'module': {}, 'frame': {}}
         self._root_cache_hits = {'module': 0, 'frame': 0}
+        self._immortal_refcount = _MISSING
 
     def close(self):
         self.conn.close()
@@ -157,7 +197,7 @@ class Reader:
         return list(sum(self.sql(sql, args), ()))
 
     def summary_stats(self):
-        return {
+        summary = {
             'path': self.path,
             'hostname': self.sql_val('SELECT hostname FROM meta'),
             'timestamp': self.sql_val('SELECT ts FROM meta'),
@@ -166,6 +206,14 @@ class Reader:
             'object_count': self.object_count(),
             'reference_count': self.reference_count(),
         }
+        immortal_refcount = self.immortal_refcount()
+        if immortal_refcount is not None:
+            summary['immortal_refcount'] = immortal_refcount
+            summary['immortal_object_count'] = self.sql_val(
+                'SELECT immortal_object_count FROM meta',
+                default=0,
+            )
+        return summary
 
     def object_count(self):
         return self.sql_val('SELECT count(*) FROM object')
@@ -224,6 +272,23 @@ class Reader:
 
     def obj_refcount(self, obj_id):
         return self.sql_val('SELECT refcount FROM object WHERE id = ?', (obj_id,))
+
+    def immortal_refcount(self):
+        if self._immortal_refcount is _MISSING:
+            if 'immortal_refcount' not in self._meta_columns:
+                self._immortal_refcount = None
+            else:
+                self._immortal_refcount = self.sql_val(
+                    'SELECT immortal_refcount FROM meta',
+                    default=None,
+                )
+        return self._immortal_refcount
+
+    def format_refcount(self, refcount):
+        immortal_refcount = self.immortal_refcount()
+        if immortal_refcount is not None and refcount == immortal_refcount:
+            return 'immortal'
+        return str(refcount)
 
     def obj_len(self, obj_id):
         return self.sql_val('SELECT len FROM object WHERE id = ?', (obj_id,))
@@ -856,6 +921,7 @@ class Reader:
         return '<{}{}#{}>'.format(name, mark_label, obj_id)
 
     def object_summary(self, obj_id):
+        refcount = self.obj_refcount(obj_id)
         return {
             'id': obj_id,
             'label': self.object_label(obj_id),
@@ -863,7 +929,8 @@ class Reader:
             'typename': self.obj_typename(obj_id),
             'typequalname': self.obj_typequalname(obj_id),
             'size': self.obj_size(obj_id),
-            'refcount': self.obj_refcount(obj_id),
+            'refcount': refcount,
+            'refcount_display': self.format_refcount(refcount),
             'len': self.obj_len(obj_id),
             'marks': self.get_marks(obj_id),
             'flags': {
@@ -1158,15 +1225,16 @@ class Console(Cmd):
                 num_instances=self.reader.obj_instance_count(obj_id),
             )
         obj_len = self.reader.obj_len(obj_id)
+        refcount = self.reader.format_refcount(self.reader.obj_refcount(obj_id))
         if obj_len is None:
             return '{label} (size={size}, refcount={refcount})'.format(
                 label=self._obj_label(obj_id),
-                refcount=self.reader.obj_refcount(obj_id),
+                refcount=refcount,
                 size=self.reader.obj_size(obj_id))
 
         return '{label} (size={size}, refcount={refcount}, len={len})'.format(
             label=self._obj_label(obj_id),
-            refcount=self.reader.obj_refcount(obj_id),
+            refcount=refcount,
             size=self.reader.obj_size(obj_id),
             len=obj_len)
 
