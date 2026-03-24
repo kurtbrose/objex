@@ -113,7 +113,7 @@ function renderRootSummaryList(title, items) {
     <div>
       <h3>${title}</h3>
       <ul class="refs">
-        ${(items || []).length ? items.map(item => `<li><span class="edge">${item.count}</span>${item.object ? objectLink(item.object) : `<span>${escapeHtml(item.label)}</span>`}${item.object ? `<span class="type">${isModuleList ? renderModulePathLinks(item.label) : escapeHtml(item.label)}</span>` : ''}</li>`).join('') : '<li class="empty">No entries</li>'}
+        ${(items || []).length ? items.map(item => `<li><span class="edge">${item.count}</span>${isModuleList ? renderModulePathLinks(item.label) : (item.object ? objectLink(item.object) : `<span>${escapeHtml(item.label)}</span>`)}</li>`).join('') : '<li class="empty">No entries</li>'}
       </ul>
     </div>
   `;
