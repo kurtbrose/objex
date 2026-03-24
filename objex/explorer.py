@@ -902,6 +902,62 @@ class Reader:
             'frame_paths': frame_path_counts.most_common(top_n),
         }
 
+    def sampled_root_summary_data(self, sample_size=500, top_n=10, path_prefix_depth=4):
+        module_root_counts = Counter()
+        module_path_counts = Counter()
+        frame_root_counts = Counter()
+        frame_path_counts = Counter()
+        module_root_examples = {}
+        module_path_examples = {}
+        frame_root_examples = {}
+        frame_path_examples = {}
+
+        for obj_id in self.random_objects(limit=sample_size):
+            module_paths = [path for path in self.find_path_to_module(obj_id) if path]
+            if module_paths:
+                root_obj_id = module_paths[0][0][0]
+                root_label = self.modulename(root_obj_id) or self.object_label(root_obj_id)
+                module_root_counts[root_label] += 1
+                module_root_examples.setdefault(root_label, root_obj_id)
+                for ref_path in module_paths:
+                    normalized = self._normalize_ref_path(ref_path, prefix_depth=path_prefix_depth)
+                    if normalized:
+                        module_path_counts[normalized] += 1
+                        module_path_examples.setdefault(normalized, ref_path[0][0])
+
+            frame_paths = [path for path in self.find_path_to_frame(obj_id) if path]
+            if frame_paths:
+                root_obj_id = frame_paths[0][0][0]
+                root_label = self.frame_codename(root_obj_id)
+                frame_root_counts[root_label] += 1
+                frame_root_examples.setdefault(root_label, root_obj_id)
+                for ref_path in frame_paths:
+                    normalized = self._normalize_ref_path(ref_path, prefix_depth=path_prefix_depth)
+                    if normalized:
+                        frame_path_counts[normalized] += 1
+                        frame_path_examples.setdefault(normalized, ref_path[0][0])
+
+        def _items(counter, examples):
+            ret = []
+            for label, count in counter.most_common(top_n):
+                item = {
+                    'label': label,
+                    'count': count,
+                }
+                root_obj_id = examples.get(label)
+                if root_obj_id is not None:
+                    item['object'] = self.object_summary(root_obj_id)
+                ret.append(item)
+            return ret
+
+        return {
+            'sample_size': sample_size,
+            'module_roots': _items(module_root_counts, module_root_examples),
+            'module_paths': _items(module_path_counts, module_path_examples),
+            'frame_roots': _items(frame_root_counts, frame_root_examples),
+            'frame_paths': _items(frame_path_counts, frame_path_examples),
+        }
+
     def random_object_id(self):
         return self.sql_val('SELECT id FROM object ORDER BY random() LIMIT 1')
 

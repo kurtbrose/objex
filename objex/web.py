@@ -15,7 +15,7 @@ INDEX_HTML = """<!doctype html>
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">objex web</div>
+    <a class="brand" href="/">objex web</a>
     <form id="jump-form"><input id="jump-id" placeholder="Object ID"><button>Go</button></form>
     <form id="path-form"><input id="path-input" placeholder="Path like sys.modules"><button>Path</button></form>
     <form id="type-form"><input id="type-input" placeholder="Type search"><button>Type</button></form>
@@ -24,15 +24,15 @@ INDEX_HTML = """<!doctype html>
   <section id="summary" class="summary"></section>
   <section id="loading" class="loading hidden"></section>
   <section id="message" class="message"></section>
+  <main class="layout">
+    <section id="inbound-panel" class="panel"></section>
+    <aside id="object-panel" class="panel"></aside>
+    <section id="outbound-panel" class="panel"></section>
+  </main>
+  <section id="paths-panel" class="panel"></section>
   <section id="discovery-panel" class="panel"></section>
   <section id="root-summary-panel" class="panel"></section>
   <section id="marks-panel" class="panel"></section>
-  <main class="layout">
-    <aside id="object-panel" class="panel"></aside>
-    <section id="outbound-panel" class="panel"></section>
-    <section id="inbound-panel" class="panel"></section>
-  </main>
-  <section id="paths-panel" class="panel"></section>
   <section id="search-results" class="panel search-results"></section>
   <script src="/app.js"></script>
 </body>
@@ -61,7 +61,21 @@ async function fetchJson(url) {
 }
 
 function objectLink(obj) {
-  return `<button class="object-link" data-object-id="${obj.id}">${escapeHtml(obj.label)}</button>`;
+  return `<a class="object-link" href="/?id=${encodeURIComponent(obj.id)}" data-object-id="${obj.id}">${escapeHtml(obj.label)}</a>`;
+}
+
+function pathLink(path, label) {
+  return `<a class="object-link path-link" href="/?path=${encodeURIComponent(path)}" data-go-path="${escapeHtml(path)}">${escapeHtml(label)}</a>`;
+}
+
+function renderModulePathLinks(moduleName) {
+  const segments = moduleName.split('.');
+  const parts = [];
+  for (let i = 0; i < segments.length; i += 1) {
+    const prefix = segments.slice(0, i + 1).join('.');
+    parts.push(pathLink(prefix, segments[i]));
+  }
+  return parts.join('<span class="path-sep">.</span>');
 }
 
 function renderSummary(summary) {
@@ -73,12 +87,18 @@ function renderSummary(summary) {
   `;
 }
 
+function setObjectMode(hasObject) {
+  document.body.classList.toggle('object-mode', hasObject);
+  document.body.classList.toggle('landing-mode', !hasObject);
+}
+
 function renderRootSummaryList(title, items) {
+  const isModuleList = title.indexOf('Module') !== -1;
   return `
     <div>
       <h3>${title}</h3>
       <ul class="refs">
-        ${(items || []).length ? items.map(item => `<li><span class="edge">${item[1]}</span>${escapeHtml(item[0])}</li>`).join('') : '<li class="empty">No entries</li>'}
+        ${(items || []).length ? items.map(item => `<li><span class="edge">${item.count}</span>${item.object ? objectLink(item.object) : `<span>${escapeHtml(item.label)}</span>`}${item.object ? `<span class="type">${isModuleList ? renderModulePathLinks(item.label) : escapeHtml(item.label)}</span>` : ''}</li>`).join('') : '<li class="empty">No entries</li>'}
       </ul>
     </div>
   `;
@@ -254,6 +274,7 @@ async function loadObject(id, pushState = true) {
       fetchJson('/api/marks')
     ]);
     state.currentObjectId = obj.id;
+    setObjectMode(true);
     renderObjectPanel(obj);
     renderMarksPanel(marks);
     renderRefs('outbound-panel', 'Outbound References', referents);
@@ -265,6 +286,15 @@ async function loadObject(id, pushState = true) {
   } catch (err) {
     setMessage(err.message);
   }
+}
+
+function showLandingPage() {
+  state.currentObjectId = null;
+  setObjectMode(false);
+  document.getElementById('object-panel').innerHTML = '';
+  document.getElementById('inbound-panel').innerHTML = '';
+  document.getElementById('outbound-panel').innerHTML = '';
+  document.getElementById('paths-panel').innerHTML = '';
 }
 
 async function loadRootSummary(sampleSize = 200, topN = 10) {
@@ -286,14 +316,20 @@ async function init() {
   renderSummary(summary);
   renderDiscovery(topTypes, largestObjects);
   loadRootSummary();
+  showLandingPage();
 
   const params = new URLSearchParams(window.location.search);
   const id = params.get('id');
+  const path = params.get('path');
   if (id) {
-    loadObject(id, false);
-  } else {
-    const random = await fetchJson('/api/random');
-    loadObject(random.id, false);
+    await loadObject(id, false);
+  } else if (path) {
+    try {
+      const payload = await fetchJson(`/api/go?path=${encodeURIComponent(path)}`);
+      await loadObject(payload.id, false);
+    } catch (err) {
+      setMessage(err.message);
+    }
   }
 
   document.body.addEventListener('click', async (event) => {
@@ -307,6 +343,17 @@ async function init() {
     if (button) {
       event.preventDefault();
       loadObject(button.dataset.objectId);
+      return;
+    }
+    const pathButton = event.target.closest('[data-go-path]');
+    if (pathButton) {
+      event.preventDefault();
+      try {
+        const payload = await fetchJson(`/api/go?path=${encodeURIComponent(pathButton.dataset.goPath)}`);
+        loadObject(payload.id);
+      } catch (err) {
+        setMessage(err.message);
+      }
     }
   });
 
@@ -367,6 +414,14 @@ async function init() {
   window.addEventListener('popstate', (event) => {
     if (event.state && event.state.id) {
       loadObject(event.state.id, false);
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('id');
+    if (id) {
+      loadObject(id, false);
+    } else {
+      showLandingPage();
     }
   });
 }
@@ -402,8 +457,14 @@ STYLES_CSS = """body {
   background: #d6c5a3;
   color: #1f2328;
   cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
 }
 .brand { font-weight: 700; margin-right: 0.5rem; }
+.brand {
+  color: inherit;
+  text-decoration: none;
+}
 .summary, .message, .panel {
   margin: 1rem;
   padding: 1rem;
@@ -438,8 +499,20 @@ STYLES_CSS = """body {
 }
 .layout {
   display: grid;
-  grid-template-columns: 1fr 1.5fr 1.5fr;
+  grid-template-columns: 1.2fr 1fr 1.2fr;
   gap: 0;
+}
+body.landing-mode .layout,
+body.landing-mode #paths-panel {
+  display: none;
+}
+body.object-mode #discovery-panel,
+body.object-mode #root-summary-panel,
+body.object-mode #marks-panel {
+  display: none;
+}
+body.landing-mode #search-results:empty {
+  display: none;
 }
 .panel-header {
   display: flex;
@@ -483,6 +556,14 @@ STYLES_CSS = """body {
 .type {
   color: #5d6470;
   margin-left: 0.45rem;
+}
+.path-link {
+  padding: 0.12rem 0.28rem;
+  background: #efe3c9;
+}
+.path-sep {
+  color: #8a4b08;
+  margin: 0 0.12rem;
 }
 .meta {
   display: grid;
@@ -593,7 +674,7 @@ def dispatch_request(db_path, path):
                 )
             if parsed.path == '/api/root-summary':
                 return 200, 'application/json; charset=utf-8', _json_bytes(
-                    reader.sampled_root_summary(
+                    reader.sampled_root_summary_data(
                         sample_size=_int_param(query, 'sample_size', 500),
                         top_n=_int_param(query, 'top_n', 10),
                     )

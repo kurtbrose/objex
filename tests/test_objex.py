@@ -383,6 +383,11 @@ class ObjexTests(unittest.TestCase):
         assert root_summary_payload['sample_size'] == 25
         assert 'module_roots' in root_summary_payload
         assert 'frame_roots' in root_summary_payload
+        if root_summary_payload['module_roots']:
+            first_item = root_summary_payload['module_roots'][0]
+            assert 'label' in first_item
+            assert 'count' in first_item
+            assert 'object' in first_item
 
         status_code, _, body = dispatch_request(str(analysis_path), '/api/random')
         assert status_code == 200
