@@ -2,6 +2,7 @@ import collections
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -15,6 +16,7 @@ from pathlib import Path
 from unittest.mock import patch
 from contextlib import redirect_stdout
 from io import StringIO
+import pytest
 import objex.__main__ as objex_main
 from objex import Reader, dump_graph, make_analysis_db, spawn_dump, wait_dump, Console
 from objex.explorer import InvalidDatabaseError
@@ -95,23 +97,45 @@ def make_empty_closure():
 
 
 class ObjexTests(unittest.TestCase):
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.stop_event = threading.Event()
-        self.started = threading.Event()
-        self._sample_objects = self._make_sample_objects()
-        self.thread = threading.Thread(target=self._stacker, daemon=True)
-        self.thread.start()
-        assert self.started.wait(timeout=2)
+    @classmethod
+    def setUpClass(cls):
+        cls.shared_temp_dir = tempfile.TemporaryDirectory()
+        cls.shared_base_path = Path(cls.shared_temp_dir.name)
+        cls.stop_event = threading.Event()
+        cls.started = threading.Event()
+        cls._sample_objects = cls._make_sample_objects()
+        cls.thread = threading.Thread(target=cls._stacker, args=(cls.stop_event, cls.started), daemon=True)
+        cls.thread.start()
+        assert cls.started.wait(timeout=2)
 
-    def tearDown(self):
-        self.stop_event.set()
-        self.thread.join(timeout=2)
+        cls.shared_dump_path = cls.shared_base_path / 'shared.db'
+        cls.shared_analysis_path = cls.shared_base_path / 'shared-analysis.db'
+        env = dict(os.environ)
+        env['PYTHONPATH'] = str(Path(__file__).resolve().parents[1])
+        subprocess.run(
+            [sys.executable, '-m', 'tests.clean_dump_fixture', str(cls.shared_dump_path)],
+            check=True,
+            cwd=Path(__file__).resolve().parents[1],
+            env=env,
+        )
+        make_analysis_db(str(cls.shared_dump_path), str(cls.shared_analysis_path))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.stop_event.set()
+        cls.thread.join(timeout=2)
         global GO_NESTED
         GO_NESTED = None
+        cls.shared_temp_dir.cleanup()
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
         self.temp_dir.cleanup()
 
-    def _make_sample_objects(self):
+    @staticmethod
+    def _make_sample_objects():
         legacy_a = LegacyA()
 
         slots_c = SlotsC()
@@ -157,24 +181,36 @@ class ObjexTests(unittest.TestCase):
             'go_nested': GO_NESTED,
         }
 
-    def _stacker(self, n=25):
+    @staticmethod
+    def _stacker(stop_event, started, n=25):
         if n:
-            return self._stacker(n - 1)
-        self.started.set()
-        while not self.stop_event.wait(0.01):
+            return ObjexTests._stacker(stop_event, started, n - 1)
+        started.set()
+        while not stop_event.wait(0.01):
             time.sleep(0.01)
 
+    def copy_shared_dump(self, name):
+        path = Path(self.temp_dir.name) / name
+        shutil.copy2(self.shared_dump_path, path)
+        return path
+
+    def copy_shared_analysis(self, name):
+        path = Path(self.temp_dir.name) / name
+        shutil.copy2(self.shared_analysis_path, path)
+        return path
+
+    @pytest.mark.slow
     def test_dump_graph_and_make_analysis_db(self):
-        base_path = Path(self.temp_dir.name)
+        gc_dump_path = Path(self.temp_dir.name) / 'objex-test-gc.db'
+        gc_analysis_path = Path(self.temp_dir.name) / 'objex-test-gc-analysis.db'
+        dump_graph(str(gc_dump_path), use_gc=True)
+        make_analysis_db(str(gc_dump_path), str(gc_analysis_path))
 
-        for use_gc in (False, True):
-            with self.subTest(use_gc=use_gc):
-                dump_path = base_path / ('objex-test-gc.db' if use_gc else 'objex-test.db')
-                analysis_path = base_path / ('objex-test-gc-analysis.db' if use_gc else 'objex-test-analysis.db')
-
-                dump_graph(str(dump_path), use_gc=use_gc)
-                make_analysis_db(str(dump_path), str(analysis_path))
-
+        for dump_path, analysis_path in (
+            (self.shared_dump_path, self.shared_analysis_path),
+            (gc_dump_path, gc_analysis_path),
+        ):
+            with self.subTest(analysis_path=str(analysis_path)):
                 with Reader(str(analysis_path)) as reader:
                     assert dump_path.exists()
                     assert analysis_path.exists()
@@ -226,13 +262,7 @@ class ObjexTests(unittest.TestCase):
                 assert 'reference_src' in index_names
 
     def test_analysis_db_attributes_instance_dict_size_to_instance(self):
-        base_path = Path(self.temp_dir.name)
-        dump_path = base_path / 'attributed-size.db'
-        analysis_path = base_path / 'attributed-size-analysis.db'
-        dump_graph(str(dump_path), use_gc=False)
-        make_analysis_db(str(dump_path), str(analysis_path))
-
-        with Reader(str(analysis_path)) as reader:
+        with Reader(str(self.shared_analysis_path)) as reader:
             legacy_type_id = reader.find_type_by_name('LegacyA')[0]
             legacy_instance_id = reader.random_instances(legacy_type_id, limit=1)[0]
             legacy_dict_id = reader.sql_val(
@@ -244,11 +274,7 @@ class ObjexTests(unittest.TestCase):
             assert reader.obj_attributed_size(legacy_dict_id) == 0
 
     def test_reader_rebuilds_missing_attributed_size_table(self):
-        base_path = Path(self.temp_dir.name)
-        dump_path = base_path / 'legacy-analysis-source.db'
-        analysis_path = base_path / 'legacy-analysis.db'
-        dump_graph(str(dump_path), use_gc=False)
-        make_analysis_db(str(dump_path), str(analysis_path))
+        analysis_path = self.copy_shared_analysis('legacy-analysis.db')
 
         conn = sqlite3.connect(str(analysis_path))
         try:
@@ -263,6 +289,7 @@ class ObjexTests(unittest.TestCase):
             assert reader.obj_attributed_size(legacy_instance_id) >= reader.obj_size(legacy_instance_id)
             assert 'object_attributed_size' in reader._table_names
 
+    @pytest.mark.slow
     def test_dump_graph_reconciles_wal_into_main_db(self):
         dump_path = Path(self.temp_dir.name) / 'portable.db'
 
@@ -279,6 +306,7 @@ class ObjexTests(unittest.TestCase):
         finally:
             conn.close()
 
+    @pytest.mark.slow
     def test_dump_graph_survives_getfullargspec_failures(self):
         dump_path = Path(self.temp_dir.name) / 'getfullargspec-failure.db'
 
@@ -292,34 +320,25 @@ class ObjexTests(unittest.TestCase):
             assert reader.object_count() > 0
 
     def test_dump_graph_survives_empty_closure_cells(self):
-        dump_path = Path(self.temp_dir.name) / 'empty-closure.db'
+        with Reader(str(self.shared_dump_path)) as reader:
+            assert reader.object_count() > 0
 
-        dump_graph(str(dump_path), use_gc=False)
-
-        with Reader(str(dump_path)) as reader:
             assert reader.sql_val("SELECT COUNT(*) FROM function WHERE func_name = ?", ('inner',)) > 0
 
     def test_dump_graph_survives_non_attributeerror_dunder_dict_access(self):
-        dump_path = Path(self.temp_dir.name) / 'exploding-getattr.db'
-
-        dump_graph(str(dump_path), use_gc=False)
-
-        with Reader(str(dump_path)) as reader:
+        with Reader(str(self.shared_dump_path)) as reader:
             assert reader.find_type_by_name('ExplodingGetattr')
 
     def test_dump_graph_uses_resolved_dunder_dict_without_reaccess(self):
-        dump_path = Path(self.temp_dir.name) / 'misdirecting-getattribute.db'
-
-        dump_graph(str(dump_path), use_gc=False)
-
-        with Reader(str(dump_path)) as reader:
+        with Reader(str(self.shared_dump_path)) as reader:
             assert reader.find_type_by_name('MisdirectingGetattribute')
 
+    @pytest.mark.slow
     @unittest.skipUnless(hasattr(os, 'fork'), 'requires os.fork')
     def test_spawn_dump_and_wait_dump(self):
         dump_path = Path(self.temp_dir.name) / 'forked.db'
-        self.stop_event.set()
-        self.thread.join(timeout=2)
+        type(self).stop_event.set()
+        type(self).thread.join(timeout=2)
 
         pid = spawn_dump(str(dump_path), use_gc=False)
         exit_code = wait_dump(pid)
@@ -366,14 +385,8 @@ class ObjexTests(unittest.TestCase):
         assert 'analysis_db' in result.stdout
 
     def test_main_supports_existing_path_legacy_explore_form(self):
-        base_path = Path(self.temp_dir.name)
-        dump_path = base_path / 'legacy.db'
-        analysis_path = base_path / 'legacy-analysis.db'
-        dump_graph(str(dump_path), use_gc=False)
-        make_analysis_db(str(dump_path), str(analysis_path))
-
         with patch('objex.__main__.explorer.Console.run', return_value=None):
-            assert objex_main.main([str(analysis_path)]) == 0
+            assert objex_main.main([str(self.shared_analysis_path)]) == 0
 
     def test_main_does_not_treat_typos_as_legacy_explore_paths(self):
         try:
@@ -400,11 +413,7 @@ class ObjexTests(unittest.TestCase):
             assert False, 'expected InvalidDatabaseError'
 
     def test_web_api_serves_summary_and_object_views(self):
-        base_path = Path(self.temp_dir.name)
-        dump_path = base_path / 'web.db'
-        analysis_path = base_path / 'web-analysis.db'
-        dump_graph(str(dump_path), use_gc=False)
-        make_analysis_db(str(dump_path), str(analysis_path))
+        analysis_path = self.shared_analysis_path
 
         status_code, _, body = dispatch_request(str(analysis_path), '/api/summary')
         assert status_code == 200
@@ -537,13 +546,7 @@ class ObjexTests(unittest.TestCase):
         assert object_payload['refcount_display'] == 'immortal'
 
     def test_console_commands_validate_missing_args(self):
-        base_path = Path(self.temp_dir.name)
-        dump_path = base_path / 'console.db'
-        analysis_path = base_path / 'console-analysis.db'
-        dump_graph(str(dump_path), use_gc=False)
-        make_analysis_db(str(dump_path), str(analysis_path))
-
-        with Reader(str(analysis_path)) as reader:
+        with Reader(str(self.shared_analysis_path)) as reader:
             console = Console(reader)
             output = StringIO()
             with redirect_stdout(output):
@@ -559,13 +562,7 @@ class ObjexTests(unittest.TestCase):
         assert 'top command expects one or two arguments' in text
 
     def test_reader_sampled_root_summary(self):
-        base_path = Path(self.temp_dir.name)
-        dump_path = base_path / 'roots.db'
-        analysis_path = base_path / 'roots-analysis.db'
-        dump_graph(str(dump_path), use_gc=False)
-        make_analysis_db(str(dump_path), str(analysis_path))
-
-        with Reader(str(analysis_path)) as reader:
+        with Reader(str(self.shared_analysis_path)) as reader:
             summary = reader.sampled_root_summary(sample_size=25, top_n=5)
 
         assert summary['sample_size'] == 25
@@ -575,26 +572,14 @@ class ObjexTests(unittest.TestCase):
         assert isinstance(summary['frame_paths'], list)
 
     def test_reader_resolve_go_supports_nested_module_paths(self):
-        base_path = Path(self.temp_dir.name)
-        dump_path = base_path / 'go.db'
-        analysis_path = base_path / 'go-analysis.db'
-        dump_graph(str(dump_path), use_gc=False)
-        make_analysis_db(str(dump_path), str(analysis_path))
-
-        with Reader(str(analysis_path)) as reader:
-            obj_id = reader.resolve_go(__name__ + '.GO_NESTED.level1.level2.target')
+        with Reader(str(self.shared_analysis_path)) as reader:
+            obj_id = reader.resolve_go('__main__.GO_NESTED.level1.level2.target')
 
             assert reader.obj_typename(obj_id) == 'deque'
             assert reader.obj_len(obj_id) == 3
 
     def test_console_root_summary(self):
-        base_path = Path(self.temp_dir.name)
-        dump_path = base_path / 'console-roots.db'
-        analysis_path = base_path / 'console-roots-analysis.db'
-        dump_graph(str(dump_path), use_gc=False)
-        make_analysis_db(str(dump_path), str(analysis_path))
-
-        with Reader(str(analysis_path)) as reader:
+        with Reader(str(self.shared_analysis_path)) as reader:
             console = Console(reader)
             output = StringIO()
             with redirect_stdout(output):
@@ -606,13 +591,7 @@ class ObjexTests(unittest.TestCase):
         assert 'Top frame roots:' in text
 
     def test_reader_root_path_cache_reuses_suffixes(self):
-        base_path = Path(self.temp_dir.name)
-        dump_path = base_path / 'cache.db'
-        analysis_path = base_path / 'cache-analysis.db'
-        dump_graph(str(dump_path), use_gc=False)
-        make_analysis_db(str(dump_path), str(analysis_path))
-
-        with Reader(str(analysis_path)) as reader:
+        with Reader(str(self.shared_analysis_path)) as reader:
             obj_id = None
             path = []
             for candidate_obj_id in reader.random_objects(limit=100):

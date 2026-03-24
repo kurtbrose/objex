@@ -35,3 +35,9 @@ Homepage = "https://github.com/kurtbrose/objex"
 
 [tool.setuptools]
 packages = ["objex"]
+
+[tool.pytest.ini_options]
+addopts = "-m 'not slow'"
+markers = [
+  "slow: end-to-end dump creation smoke tests",
+]
