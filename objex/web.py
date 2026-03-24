@@ -25,6 +25,7 @@ INDEX_HTML = """<!doctype html>
   <section id="loading" class="loading hidden"></section>
   <section id="message" class="message"></section>
   <section id="discovery-panel" class="panel"></section>
+  <section id="root-summary-panel" class="panel"></section>
   <section id="marks-panel" class="panel"></section>
   <main class="layout">
     <aside id="object-panel" class="panel"></aside>
@@ -83,7 +84,7 @@ function renderRootSummaryList(title, items) {
   `;
 }
 
-function renderDiscovery(topTypes, largestObjects, rootSummary) {
+function renderDiscovery(topTypes, largestObjects) {
   document.getElementById('discovery-panel').innerHTML = `
     <h2>Discovery</h2>
     <div class="discovery-grid">
@@ -99,11 +100,40 @@ function renderDiscovery(topTypes, largestObjects, rootSummary) {
           ${largestObjects.items.map(item => `<li>${objectLink(item.object)} <span class="type">${escapeHtml(item.object.typequalname)}</span> <span class="edge">${item.size} bytes</span></li>`).join('')}
         </ul>
       </div>
-      ${renderRootSummaryList('Sampled Module Roots', rootSummary.module_roots)}
-      ${renderRootSummaryList('Sampled Module Paths', rootSummary.module_paths)}
-      ${renderRootSummaryList('Sampled Frame Roots', rootSummary.frame_roots)}
-      ${renderRootSummaryList('Sampled Frame Paths', rootSummary.frame_paths)}
     </div>
+  `;
+}
+
+function renderRootSummaryLoading(sampleSize) {
+  document.getElementById('root-summary-panel').innerHTML = `
+    <h2>Sampled Root Summary</h2>
+    <div class="loading-inline"><span class="spinner" aria-hidden="true"></span><span>Sampling ${sampleSize} random objects…</span></div>
+  `;
+}
+
+function renderRootSummary(rootSummary) {
+  document.getElementById('root-summary-panel').innerHTML = `
+    <div class="panel-header">
+      <h2>Sampled Root Summary</h2>
+      <button id="reload-root-summary" type="button">Refresh</button>
+    </div>
+    <div class="subtle">Sampled ${rootSummary.sample_size} random objects</div>
+    <div class="discovery-grid">
+      ${renderRootSummaryList('Module Roots', rootSummary.module_roots)}
+      ${renderRootSummaryList('Module Paths', rootSummary.module_paths)}
+      ${renderRootSummaryList('Frame Roots', rootSummary.frame_roots)}
+      ${renderRootSummaryList('Frame Paths', rootSummary.frame_paths)}
+    </div>
+  `;
+}
+
+function renderRootSummaryError(message) {
+  document.getElementById('root-summary-panel').innerHTML = `
+    <div class="panel-header">
+      <h2>Sampled Root Summary</h2>
+      <button id="reload-root-summary" type="button">Retry</button>
+    </div>
+    <div class="empty">${escapeHtml(message)}</div>
   `;
 }
 
@@ -237,15 +267,25 @@ async function loadObject(id, pushState = true) {
   }
 }
 
+async function loadRootSummary(sampleSize = 200, topN = 10) {
+  renderRootSummaryLoading(sampleSize);
+  try {
+    const rootSummary = await fetchJson(`/api/root-summary?sample_size=${encodeURIComponent(sampleSize)}&top_n=${encodeURIComponent(topN)}`);
+    renderRootSummary(rootSummary);
+  } catch (err) {
+    renderRootSummaryError(err.message);
+  }
+}
+
 async function init() {
-  const [summary, topTypes, largestObjects, rootSummary] = await Promise.all([
+  const [summary, topTypes, largestObjects] = await Promise.all([
     fetchJson('/api/summary'),
     fetchJson('/api/top-types?limit=12'),
-    fetchJson('/api/largest-objects?limit=12'),
-    fetchJson('/api/root-summary?sample_size=500&top_n=10')
+    fetchJson('/api/largest-objects?limit=12')
   ]);
   renderSummary(summary);
-  renderDiscovery(topTypes, largestObjects, rootSummary);
+  renderDiscovery(topTypes, largestObjects);
+  loadRootSummary();
 
   const params = new URLSearchParams(window.location.search);
   const id = params.get('id');
@@ -257,6 +297,12 @@ async function init() {
   }
 
   document.body.addEventListener('click', async (event) => {
+    const reloadButton = event.target.closest('#reload-root-summary');
+    if (reloadButton) {
+      event.preventDefault();
+      loadRootSummary();
+      return;
+    }
     const button = event.target.closest('[data-object-id]');
     if (button) {
       event.preventDefault();
@@ -394,6 +440,25 @@ STYLES_CSS = """body {
   display: grid;
   grid-template-columns: 1fr 1.5fr 1.5fr;
   gap: 0;
+}
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+.panel-header h2 {
+  margin: 0;
+}
+.subtle {
+  color: #5d6470;
+  margin-bottom: 0.9rem;
+}
+.loading-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
 }
 .discovery-grid {
   display: grid;
