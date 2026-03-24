@@ -66,6 +66,9 @@ function pathLink(path, label) {
 }
 
 function chartTargetAttrs(item, labelKey = 'label') {
+  if (item.special) {
+    return `href="/?special=${encodeURIComponent(item.special)}" data-special-target="${item.special}"`;
+  }
   if (item.object) {
     return `href="/?id=${encodeURIComponent(item.object.id)}" data-object-id="${item.object.id}"`;
   }
@@ -121,6 +124,45 @@ function renderSummary(summary) {
 function setObjectMode(hasObject) {
   document.body.classList.toggle('object-mode', hasObject);
   document.body.classList.toggle('landing-mode', !hasObject);
+}
+
+function renderSpecialPanel(special) {
+  if (special === 'unknown-memory') {
+    document.getElementById('object-panel').innerHTML = `
+      <h2>Unknown Memory</h2>
+      <div class="object-label">RSS not explained by the discovered Python object graph</div>
+      <div class="special-copy">
+        <p>This represents resident memory that objex did not attribute to Python objects reachable from <code>gc.get_objects()</code>.</p>
+        <p>That can include non-GC-tracked Python objects, interpreter/runtime allocations, native extension memory, allocator fragmentation, or memory held outside the Python object graph entirely.</p>
+        <p>It is the dark RSS remainder, not a real object subtree you can navigate through.</p>
+      </div>
+    `;
+    document.getElementById('inbound-panel').innerHTML = '';
+    document.getElementById('outbound-panel').innerHTML = '';
+    return;
+  }
+
+  if (special === 'other-types') {
+    document.getElementById('object-panel').innerHTML = `
+      <h2>Other Types</h2>
+      <div class="object-label">Discovered Python-object memory outside the top displayed types</div>
+      <div class="special-copy">
+        <p>This bucket groups together the remainder of the discovered Python-object memory after the top type slices shown in the chart.</p>
+        <p>It is still part of the visible Python object graph, but it is aggregated for readability rather than represented as one concrete type.</p>
+        <p>Use the type list below the chart to inspect the individual visible types directly.</p>
+      </div>
+    `;
+    document.getElementById('inbound-panel').innerHTML = '';
+    document.getElementById('outbound-panel').innerHTML = '';
+    return;
+  }
+
+  document.getElementById('object-panel').innerHTML = `
+    <h2>Special View</h2>
+    <div class="empty">Unknown special target: ${escapeHtml(special)}</div>
+  `;
+  document.getElementById('inbound-panel').innerHTML = '';
+  document.getElementById('outbound-panel').innerHTML = '';
 }
 
 function renderRootSummaryList(title, items) {
@@ -203,10 +245,10 @@ function renderTopTypeMemoryBar(summary, topTypes) {
   const unknownValue = Math.max(0, 100 - visiblePercent);
   const chartItems = [...leading];
   if (otherValue >= 0.1) {
-    chartItems.push({label: 'Other', value: otherValue});
+    chartItems.push({label: 'Other', value: otherValue, special: 'other-types'});
   }
   if (unknownValue >= 0.1) {
-    chartItems.push({label: 'Unknown', value: unknownValue});
+    chartItems.push({label: 'Unknown', value: unknownValue, special: 'unknown-memory'});
   }
 
   let x = 0;
@@ -519,6 +561,12 @@ function showLandingPage() {
   document.getElementById('outbound-panel').innerHTML = '';
 }
 
+function showSpecialPage(special) {
+  state.currentObjectId = null;
+  setObjectMode(true);
+  renderSpecialPanel(special);
+}
+
 async function loadRootSummary(sampleSize = 200, topN = 10) {
   renderRootSummaryLoading(sampleSize);
   try {
@@ -544,8 +592,11 @@ async function init() {
   const id = params.get('id');
   const query = params.get('q');
   const path = params.get('path');
+  const special = params.get('special');
   if (id) {
     await loadObject(id, false);
+  } else if (special) {
+    showSpecialPage(special);
   } else if (query) {
     try {
       const payload = await fetchJson(`/api/go?q=${encodeURIComponent(query)}`);
@@ -573,6 +624,13 @@ async function init() {
     if (button) {
       event.preventDefault();
       loadObject(button.dataset.objectId);
+      return;
+    }
+    const specialButton = event.target.closest('[data-special-target]');
+    if (specialButton) {
+      event.preventDefault();
+      history.pushState({ special: specialButton.dataset.specialTarget }, '', `/?special=${encodeURIComponent(specialButton.dataset.specialTarget)}`);
+      showSpecialPage(specialButton.dataset.specialTarget);
       return;
     }
     const pathButton = event.target.closest('[data-go-query]');
@@ -630,8 +688,11 @@ async function init() {
     }
     const params = new URLSearchParams(window.location.search);
     const id = params.get('id');
+    const special = params.get('special');
     if (id) {
       loadObject(id, false);
+    } else if (special) {
+      showSpecialPage(special);
     } else {
       showLandingPage();
     }
@@ -810,6 +871,12 @@ body.landing-mode #search-results:empty {
   dominant-baseline: middle;
   font-family: ui-sans-serif, system-ui, sans-serif;
   pointer-events: none;
+}
+.special-copy p {
+  margin: 0 0 0.75rem;
+}
+.special-copy p:last-child {
+  margin-bottom: 0;
 }
 .refs {
   list-style: none;
