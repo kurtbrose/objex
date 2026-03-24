@@ -139,11 +139,11 @@ function renderPercentStackedBar(title, items, valueKey, labelKey = 'label') {
   const segments = chartItems.map((item, index) => {
     const width = item.value;
     const label = `${item.label}: ${item.value.toFixed(1)}%`;
-    const text = width >= 14 ? `<text x="${x + width / 2}" y="16" text-anchor="middle" class="stacked-bar-text">${escapeHtml(item.label)}</text>` : '';
+    const text = width >= 14 ? `<text x="${x + width / 2}%" y="50%" text-anchor="middle" dominant-baseline="middle" class="stacked-bar-text">${escapeHtml(item.label)}</text>` : '';
     const segment = `
       <g>
         <title>${escapeHtml(label)}</title>
-        <rect x="${x}" y="0" width="${width}" height="24" fill="${chartColor(index)}" rx="0.8" ry="0.8"></rect>
+        <rect x="${x}%" y="0" width="${width}%" height="24" fill="${chartColor(index)}" rx="0.8" ry="0.8"></rect>
         ${text}
       </g>
     `;
@@ -154,7 +154,7 @@ function renderPercentStackedBar(title, items, valueKey, labelKey = 'label') {
   return `
     <div class="stacked-bar-card">
       <div class="stacked-bar-title">${title}</div>
-      <svg class="stacked-bar" viewBox="0 0 100 24" preserveAspectRatio="none" aria-label="${escapeHtml(title)}">
+      <svg class="stacked-bar" width="100%" height="24" aria-label="${escapeHtml(title)}">
         ${segments}
       </svg>
     </div>
@@ -214,11 +214,11 @@ function renderStackedBar(title, items, sampleSize) {
   const segments = chartItems.map((item, index) => {
     const width = item.count / total * 100;
     const label = `${item.label}: ${item.count} (${(item.count / total * 100).toFixed(1)}%)`;
-    const text = width >= 14 ? `<text x="${x + width / 2}" y="16" text-anchor="middle" class="stacked-bar-text">${escapeHtml(item.label)}</text>` : '';
+    const text = width >= 14 ? `<text x="${x + width / 2}%" y="50%" text-anchor="middle" dominant-baseline="middle" class="stacked-bar-text">${escapeHtml(item.label)}</text>` : '';
     const segment = `
       <g>
         <title>${escapeHtml(label)}</title>
-        <rect x="${x}" y="0" width="${width}" height="24" fill="${chartColor(index)}" rx="0.8" ry="0.8"></rect>
+        <rect x="${x}%" y="0" width="${width}%" height="24" fill="${chartColor(index)}" rx="0.8" ry="0.8"></rect>
         ${text}
       </g>
     `;
@@ -229,7 +229,7 @@ function renderStackedBar(title, items, sampleSize) {
   return `
     <div class="stacked-bar-card">
       <div class="stacked-bar-title">${title}</div>
-      <svg class="stacked-bar" viewBox="0 0 100 24" preserveAspectRatio="none" aria-label="${escapeHtml(title)}">
+      <svg class="stacked-bar" width="100%" height="24" aria-label="${escapeHtml(title)}">
         ${segments}
       </svg>
     </div>
