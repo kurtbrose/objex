@@ -5,13 +5,26 @@ from . import explorer
 from . import web
 
 
-_COMMANDS = {'explore', 'make-analysis-db', 'web'}
+_COMMANDS = {'explore', 'make-analysis-db', 'web', 'q'}
+
+_Q_ENDPOINTS = (
+    'summary', 'object', 'random', 'referents', 'referrers', 'type-search',
+    'top-types', 'largest-objects', 'root-summary', 'path-to-module',
+    'path-to-frame', 'go', 'marks', 'mark', 'sql')
 
 
 def build_parser():
     parser = argparse.ArgumentParser(
         prog='python -m objex',
         description='Export and explore Python object graphs stored in SQLite databases.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            'agent workflow example:\n'
+            '  python -m objex q analysis.db summary\n'
+            '  python -m objex q analysis.db root-summary sample_size=200\n'
+            '  python -m objex q analysis.db go q=SomeType\n'
+            '  python -m objex q analysis.db path-to-module id=4211\n'
+        ),
     )
     subparsers = parser.add_subparsers(dest='command')
 
@@ -35,6 +48,24 @@ def build_parser():
     web_parser.add_argument('analysis_db', help='Path to an objex analysis database.')
     web_parser.add_argument('--host', default='127.0.0.1', help='Host interface to bind. Default: 127.0.0.1')
     web_parser.add_argument('--port', type=int, default=8000, help='Port to bind. Default: 8000')
+
+    q_parser = subparsers.add_parser(
+        'q',
+        help='Run a one-shot JSON query against an analysis database (agent/scripting interface).',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            'endpoints: {}\n'
+            'examples:\n'
+            '  python -m objex q analysis.db summary\n'
+            '  python -m objex q analysis.db path-to-module id=4211 limit=5\n'
+            '  python -m objex q analysis.db sql "SELECT name, count(*) FROM pytype GROUP BY name"\n'
+        ).format(', '.join(_Q_ENDPOINTS)),
+    )
+    q_parser.add_argument('analysis_db', help='Path to an objex analysis database.')
+    q_parser.add_argument('endpoint', help='Query endpoint name (see below).')
+    q_parser.add_argument(
+        'params', nargs='*',
+        help='key=value query parameters, or one SQL string for the sql endpoint.')
     return parser
 
 
@@ -53,6 +84,9 @@ def main(argv=None):
     if args.command == 'make-analysis-db':
         explorer.make_analysis_db(args.collection_db, args.analysis_db)
         return 0
+
+    if args.command == 'q':
+        return _run_query(args)
 
     if args.command == 'web':
         server = web.serve(args.analysis_db, host=args.host, port=args.port)
@@ -88,6 +122,48 @@ def main(argv=None):
         else:
             raise
     return 0
+
+
+def _run_query(args):
+    import json
+    import sqlite3
+    import sys
+    from urllib.parse import urlencode
+
+    if args.endpoint == 'sql':
+        if len(args.params) != 1:
+            print(json.dumps({'error': "the sql endpoint takes exactly one SQL string"}))
+            return 1
+        # read-only enforced at the sqlite level; this is the escape hatch,
+        # never exposed over HTTP (schema documented in objex/schema.py)
+        conn = sqlite3.connect('file:{}?mode=ro'.format(args.analysis_db), uri=True)
+        conn.text_factory = str
+        try:
+            cursor = conn.execute(args.params[0])
+            columns = [d[0] for d in cursor.description or []]
+            rows = [list(row) for row in cursor.fetchall()]
+        except sqlite3.Error as exc:
+            print(json.dumps({'error': str(exc)}))
+            return 1
+        finally:
+            conn.close()
+        print(json.dumps({'columns': columns, 'rows': rows}, sort_keys=True, default=repr))
+        return 0
+
+    params = []
+    for token in args.params:
+        key, sep, value = token.partition('=')
+        if not sep:
+            print(json.dumps({'error': 'expected key=value parameter, got {!r}'.format(token)}))
+            return 1
+        params.append((key, value))
+    path = '/api/{}'.format(args.endpoint)
+    if params:
+        path = '{}?{}'.format(path, urlencode(params))
+    status, _content_type, body = web.dispatch_request(args.analysis_db, path)
+    sys.stdout.write(body.decode('utf-8'))
+    sys.stdout.write('\n')
+    return 0 if status == 200 else 1
 
 
 if __name__ == '__main__':

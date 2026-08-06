@@ -12,6 +12,7 @@ from socket import getfqdn
 import sqlite3
 import time
 import types
+import weakref
 
 from .schema import _SCHEMA
 from .dbutils import _run_ddl
@@ -103,6 +104,11 @@ class _Writer:
         self.type_slots_map = {}  # map of type ids to __slots__
         self.type_is_type_map = {}  # map of whether a type is a type
         self.modules_map = dict(sys.modules)  # map of __module__ to fake modules when no entry in sys.modules
+        # frame objects materialize lazily on modern CPython (3.11+): running
+        # stacks only yield frame objects when requested (sys._current_frames(),
+        # f_back, cr_frame, ...), so they can be absent from the all_objects
+        # snapshot; queue them as they're encountered and traverse at the end
+        self._pending_frames = []
         self.started = time.time()
         # ignore ids not just to avoid analysis noise, but because these can
         # get pretty big over time, don't want to waste DB space
@@ -225,6 +231,7 @@ class _Writer:
                 "INSERT INTO module (id, object, file, name) VALUES (?, ?, ?, ?)",
                 (obj_t_id, obj_id, module_file, obj.__name__))
         elif type(obj) is types.FrameType:
+            self._pending_frames.append(obj)
             if obj.f_back:
                 f_back_obj_id = self._ensure_db_id(obj.f_back)
             else:
@@ -294,7 +301,18 @@ class _Writer:
             check_dict, check_slots = True, True
             # check for possible sub-classes
             # TODO: cache the sub-class info based on type-id, same as slots and type-is-type
-            if isinstance(obj, tuple):  # namedtuple assume these will be most common
+            if isinstance(obj, BaseException):
+                # C-level exception slots are invisible to __dict__/__slots__ scraping
+                key_dst += [
+                    ('.args', obj.args),
+                    ('.__traceback__', obj.__traceback__),
+                    ('.__cause__', obj.__cause__),
+                    ('.__context__', obj.__context__),
+                ]
+                notes = getattr(obj, '__notes__', None)  # 3.11+, only when notes were added
+                if notes is not None:
+                    key_dst.append(('.__notes__', notes))
+            elif isinstance(obj, tuple):  # namedtuple assume these will be most common
                 extra_relationship = tuple
             elif isinstance(obj, dict):
                 extra_relationship = dict
@@ -354,6 +372,8 @@ class _Writer:
                 for name, default in zip(reversed(positional_argnames), reversed(defaults)):
                     key_dst.append((".defaults[{!r}]".format(name), default))
                 key_dst.append(('.__defaults__', obj.__defaults__))
+            if obj.__kwdefaults__ is not None:
+                key_dst.append(('.__kwdefaults__', obj.__kwdefaults__))
             key_dst.append((".__code__", code))
             key_dst.append((".__globals__", obj.__globals__))
             key_dst.append((".__doc__", obj.__doc__))
@@ -368,6 +388,37 @@ class _Writer:
         elif extra_relationship is types.GeneratorType:
             key_dst.append(('.gi_code', obj.gi_code))
             key_dst.append(('.gi_frame', obj.gi_frame))
+            key_dst.append(('.gi_yieldfrom', obj.gi_yieldfrom))
+        elif extra_relationship is types.CoroutineType:
+            key_dst.append(('.cr_code', obj.cr_code))
+            key_dst.append(('.cr_frame', obj.cr_frame))
+            key_dst.append(('.cr_await', obj.cr_await))
+        elif extra_relationship is types.AsyncGeneratorType:
+            key_dst.append(('.ag_code', obj.ag_code))
+            key_dst.append(('.ag_frame', obj.ag_frame))
+        elif extra_relationship is types.TracebackType:
+            key_dst.append(('.tb_frame', obj.tb_frame))
+            key_dst.append(('.tb_next', obj.tb_next))
+        elif extra_relationship is types.CellType:
+            try:
+                key_dst.append(('.cell_contents', obj.cell_contents))
+            except ValueError:
+                pass  # empty cell
+        elif extra_relationship is slice:
+            key_dst += [
+                ('.start', obj.start),
+                ('.stop', obj.stop),
+                ('.step', obj.step),
+            ]
+        elif extra_relationship is super:
+            key_dst += [
+                ('.__self__', obj.__self__),
+                ('.__self_class__', obj.__self_class__),
+                ('.__thisclass__', obj.__thisclass__),
+            ]
+        elif extra_relationship is weakref.ref:
+            # only the callback -- the referent is a weak edge (gc tp_traverse agrees)
+            key_dst.append(('.__callback__', obj.__callback__))
         elif extra_relationship is types.MethodType:
             key_dst += [
                 ('.__func__', obj.__func__),
@@ -449,6 +500,14 @@ class _Writer:
                 except AttributeError:
                     pass
                 key_dst.append(('.__doc__', obj.__doc__))
+        if t not in _GC_COMPLETE_TYPES:
+            # tp_traverse ground truth for anything the named handlers missed
+            # (C iterators, asyncio.Task, ContextVar, functools.partial, ...)
+            covered = {id(dst) for _, dst in key_dst}
+            covered.add(id(t))
+            for referent in gc.get_referents(obj):
+                if id(referent) not in covered:
+                    key_dst.append(('<gc>', referent))
         self.conn.executemany(
             "INSERT INTO reference (src, dst, ref) VALUES (?, ?, ?)",
             [(db_id, self._ensure_db_id(dst, refs=2), key) for key, dst in key_dst])
@@ -474,6 +533,8 @@ class _Writer:
         self.add_frames()
         for obj in self.all_objects:
             self.add_obj(obj, refs=2)
+        while self._pending_frames:
+            self.add_obj(self._pending_frames.pop(), refs=2)
         if self.use_gc:
             for obj in self.all_objects:
                 db_id = self._ensure_db_id(obj)
@@ -502,10 +563,17 @@ class _Writer:
 # special types that have special-handling code for discovering contents
 _SPECIAL_TYPES = set([
     dict, list, tuple, set, frozenset, types.FrameType, types.FunctionType,
-    types.GeneratorType, types.MethodType,
+    types.GeneratorType, types.CoroutineType, types.AsyncGeneratorType,
+    types.TracebackType, types.CellType, slice, super, weakref.ref,
+    types.MethodType,
     _DICT_PROXY_TYPE, classmethod, staticmethod, property,
     types.BuiltinFunctionType, types.BuiltinMethodType,
     types.ModuleType, collections.deque, collections.defaultdict])
+
+# exact builtin containers whose named traversal is definitionally complete;
+# exempting them keeps the hot path from building a second id-set
+_GC_COMPLETE_TYPES = frozenset([
+    dict, list, tuple, set, frozenset, collections.deque, collections.defaultdict])
 
 
 def dump_graph(path, print_info=False, use_gc=False):

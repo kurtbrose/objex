@@ -3,17 +3,10 @@
 ## ROADMAP
 
 Extensions
-- collections.deque, collections.defaultdict
-- frame, func, code etc
 - old style classes?
 
 Tests
-- CI
 - "close the loop" on dump -- check that DB was written CORRECTLY not just that it didn't crash
-
-Py3 Support
-- briefly worked, atrophied w/out tests
-- old-style classes
 
 CLI
 - better commands / sub-commands / flags /etc (face interface?)
@@ -21,6 +14,11 @@ CLI
 
 Library Meta-Data in dump
 - detect version mismatch between export and exploration
+
+Known warts
+- opening `Reader` directly on an unindexed collection DB is pathological
+  (the one-time attributed-size build runs without indices and can take
+  minutes); users are directed through make-analysis-db instead.
 
 ## Extra export data
 
@@ -71,16 +69,6 @@ Other:
 
 * convenience function for fork-and-export
 * support fork() equivalent for Windows (it borks on sockets, but that's fine for us)
-
-
-## Traversal
-
-* Iterators are an example of a group of "builtin" (aka implemented in
-  C) types that can hold onto a reference that's not accessible from
-  Python. There are listerators dictkey iterators, dictvalue
-  iterators, set iterators, etc. Luckily, like dictproxy they only
-  hold onto one reference and it's the relevant container. Might be
-  able to develop a heuristic around these kinds of types.
 
 ## CLI
 
