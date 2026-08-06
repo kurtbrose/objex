@@ -21,6 +21,7 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
 ]
 keywords = ["memory", "graph", "sqlite", "debugging"]
 
@@ -28,6 +29,11 @@ keywords = ["memory", "graph", "sqlite", "debugging"]
 cli = [
   "colorama>=0.4.6",
   "termcolor>=2.5",
+]
+
+[dependency-groups]
+dev = [
+  "pytest",
 ]
 
 [project.urls]
@@ -40,4 +46,5 @@ packages = ["objex"]
 addopts = "-m 'not slow'"
 markers = [
   "slow: end-to-end dump creation smoke tests",
+  "scenario: subprocess leak-scenario integration tests",
 ]

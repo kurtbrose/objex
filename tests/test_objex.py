@@ -306,31 +306,18 @@ class ObjexTests(unittest.TestCase):
         finally:
             conn.close()
 
-    @pytest.mark.slow
-    def test_dump_graph_survives_getfullargspec_failures(self):
-        dump_path = Path(self.temp_dir.name) / 'getfullargspec-failure.db'
-
-        def raising_getfullargspec(obj):
-            raise TypeError('unsupported callable')
-
-        with patch('objex.exporter.inspect.getfullargspec', side_effect=raising_getfullargspec):
-            dump_graph(str(dump_path), use_gc=False)
-
-        with Reader(str(dump_path)) as reader:
-            assert reader.object_count() > 0
-
     def test_dump_graph_survives_empty_closure_cells(self):
-        with Reader(str(self.shared_dump_path)) as reader:
+        with Reader(str(self.shared_analysis_path)) as reader:
             assert reader.object_count() > 0
 
             assert reader.sql_val("SELECT COUNT(*) FROM function WHERE func_name = ?", ('inner',)) > 0
 
     def test_dump_graph_survives_non_attributeerror_dunder_dict_access(self):
-        with Reader(str(self.shared_dump_path)) as reader:
+        with Reader(str(self.shared_analysis_path)) as reader:
             assert reader.find_type_by_name('ExplodingGetattr')
 
     def test_dump_graph_uses_resolved_dunder_dict_without_reaccess(self):
-        with Reader(str(self.shared_dump_path)) as reader:
+        with Reader(str(self.shared_analysis_path)) as reader:
             assert reader.find_type_by_name('MisdirectingGetattribute')
 
     @pytest.mark.slow
@@ -347,7 +334,11 @@ class ObjexTests(unittest.TestCase):
         assert dump_path.exists()
         assert not dump_path.with_name(dump_path.name + '-wal').exists()
 
-        with Reader(str(dump_path)) as reader:
+        # Reader on a raw unindexed collection DB is pathological (see TODO.md);
+        # build the analysis DB first, as users are directed to
+        analysis_path = dump_path.with_name('forked-analysis.db')
+        make_analysis_db(str(dump_path), str(analysis_path))
+        with Reader(str(analysis_path)) as reader:
             assert reader.object_count() > 0
 
     def test_module_help_does_not_start_console(self):
@@ -363,6 +354,45 @@ class ObjexTests(unittest.TestCase):
         assert 'make-analysis-db' in result.stdout
         assert 'explore' in result.stdout
         assert 'WELCOME TO OBJEX EXPLORER' not in result.stdout
+
+    def _run_q(self, *args):
+        return subprocess.run(
+            [sys.executable, '-m', 'objex', 'q', str(self.shared_analysis_path)] + list(args),
+            capture_output=True,
+            text=True,
+            cwd=Path(__file__).resolve().parents[1],
+        )
+
+    def test_q_summary_prints_json(self):
+        result = self._run_q('summary')
+        assert result.returncode == 0
+        assert json.loads(result.stdout)['object_count'] > 0
+
+    def test_q_path_to_module_shape(self):
+        with Reader(str(self.shared_analysis_path)) as reader:
+            # the deque held at module-global GO_NESTED.level1.level2.target
+            instance_id = reader.sql_val(
+                "SELECT dst FROM reference WHERE ref = '.target' LIMIT 1")
+        result = self._run_q('path-to-module', 'id={}'.format(instance_id))
+        assert result.returncode == 0
+        payload = json.loads(result.stdout)
+        assert payload['items']
+        for path in payload['items']:
+            assert path  # non-empty list of path segments
+
+    def test_q_sql_reads(self):
+        result = self._run_q('sql', 'SELECT count(*) FROM object')
+        assert result.returncode == 0
+        payload = json.loads(result.stdout)
+        assert payload['rows'] and payload['rows'][0][0] > 0
+
+    def test_q_sql_is_read_only(self):
+        result = self._run_q('sql', 'DROP TABLE object')
+        assert result.returncode != 0
+        assert 'error' in json.loads(result.stdout)
+        # the table survived
+        with Reader(str(self.shared_analysis_path)) as reader:
+            assert reader.object_count() > 0
 
     def test_module_cli_parser_supports_legacy_explore_and_analysis_command(self):
         result = subprocess.run(

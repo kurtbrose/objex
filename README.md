@@ -16,6 +16,18 @@ CLI extras for the interactive analysis UI:
 uv add '.[cli]'
 ```
 
+## when to use objex
+
+objex answers retention questions: "this object count keeps growing -- what is
+still holding these objects, and from which module/frame root?" It captures via
+fork-and-dump (near-zero pause for the target) into a portable single-file
+SQLite artifact you analyze offline, with labeled path-to-root attribution.
+For allocation-site questions ("what code path is allocating all this
+memory?"), use [memray](https://github.com/bloomberg/memray) or stdlib
+`tracemalloc` instead; see
+[docs/2026-08-06_leak_tool_landscape.md](docs/2026-08-06_leak_tool_landscape.md)
+for the full tool landscape.
+
 # workflow
 
 1- collect data from a running process (this comines well with `os.fork`)
@@ -39,6 +51,31 @@ WELCOME TO OBJEX EXPLORER
 Now exploring "dump.db" collected from a0acf3b86f31 at 2018-09-04 18:25:46
 RSS memory was 190.43MiB; 151.0MiB (79.8%) found in 622,108 python objects
 (Type "help" for options.)
+```
+
+# agent/scripting usage
+
+Every explorer query is available as a one-shot, pipeable JSON invocation via
+the `q` subcommand -- no REPL needed:
+
+```bash
+python -m objex q analysis.db summary               # {"object_count": ..., ...}
+python -m objex q analysis.db root-summary sample_size=200
+python -m objex q analysis.db go q=SomeType         # resolve a type/path query
+python -m objex q analysis.db path-to-module id=4211
+```
+
+Endpoints mirror the web API: `summary`, `object`, `random`, `referents`,
+`referrers`, `type-search`, `top-types`, `largest-objects`, `root-summary`,
+`path-to-module`, `path-to-frame`, `go`, `marks`, `mark`. Parameters are
+`key=value` tokens. Exit code is 0 on success, 1 otherwise (error payloads are
+JSON too).
+
+There is also a read-only SQL escape hatch (schema documented in
+`objex/schema.py`):
+
+```bash
+python -m objex q analysis.db sql "SELECT name, count(*) FROM pytype GROUP BY name ORDER BY 2 DESC LIMIT 10"
 ```
 
 # how to debug a memory leak

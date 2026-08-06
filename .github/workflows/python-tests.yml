@@ -2,7 +2,13 @@ name: Python tests
 
 on:
   push:
+    branches: [master]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -10,16 +16,32 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13']
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v6
-
-      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          enable-cache: true
 
-      - name: Run tests
-        run: uv run python -m unittest discover -s tests
+      - name: Run tests (non-slow, includes leak scenarios)
+        run: uv run --python ${{ matrix.python-version }} pytest -q
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Run full in-process dump smoke tests
+        run: uv run --python ${{ matrix.python-version }} pytest -q -m slow --no-header -p no:cacheprovider
