@@ -407,6 +407,7 @@ function renderObjectPanel(obj) {
       <dt>Size</dt><dd>${obj.size}</dd>
       <dt>Refcount</dt><dd>${escapeHtml(obj.refcount_display ?? String(obj.refcount))}</dd>
       <dt>Len</dt><dd>${obj.len ?? ''}</dd>
+      ${obj.repr != null ? `<dt>Repr</dt><dd>${escapeHtml(obj.repr)}</dd>` : ''}
     </dl>
   `;
 }

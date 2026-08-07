@@ -14,7 +14,8 @@ CREATE TABLE meta (
     memory_mb INTEGER NOT NULL,
     gc_info TEXT NOT NULL,
     num_gcd_objects INTEGER NOT NULL,
-    duration_s REAL
+    duration_s REAL,
+    capture_values TEXT -- value-capture tier used for this dump ('none', 'builtins', 'repr')
 );
 
 CREATE TABLE object (
@@ -25,6 +26,13 @@ CREATE TABLE object (
     refcount INTEGER NOT NULL,
     in_gc_objects INTEGER NOT NULL,
     is_gc_tracked INTEGER NOT NULL
+);
+
+CREATE TABLE object_repr (
+    object INTEGER PRIMARY KEY, -- object id
+    repr TEXT NOT NULL,         -- truncated repr text, or redaction placeholder
+    truncated INTEGER NOT NULL, -- 1 if cut at value_limit
+    redacted INTEGER NOT NULL   -- 1 if replaced by the sensitive-key pass
 );
 
 CREATE TABLE pytype (
