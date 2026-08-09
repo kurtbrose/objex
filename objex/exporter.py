@@ -324,9 +324,11 @@ class _Writer:
                 extra_relationship = frozenset
         # STEP 2 - GET KEYS
         if extra_relationship is dict:
-            keys = obj.keys()
-            key_dst += [('@{}'.format(self._ensure_db_id(key, refs=2)), dict.__getitem__(obj, key))
-                        for key in keys]
+            # dict.items, NOT keys() + __getitem__: a key mutated after insertion
+            # (e.g. openpyxl StyleArray, an array subclass with a content-based
+            # hash) iterates fine but raises KeyError on lookup by key
+            key_dst += [('@{}'.format(self._ensure_db_id(key, refs=2)), value)
+                        for key, value in dict.items(obj)]
         elif extra_relationship in (list, tuple, collections.deque):
             key_dst += enumerate(obj)
         elif extra_relationship in (set, frozenset):
