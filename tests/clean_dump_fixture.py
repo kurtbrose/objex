@@ -63,6 +63,19 @@ class MisdirectingGetattribute:
         return object.__getattribute__(self, name)
 
 
+class MutableHashKey:
+    """Key whose hash changes when mutated (like openpyxl's StyleArray)."""
+
+    def __init__(self, value=0):
+        self.value = value
+
+    def __hash__(self):
+        return hash(self.value)
+
+    def __eq__(self, other):
+        return isinstance(other, MutableHashKey) and self.value == other.value
+
+
 def closing(a, b=1):
     c = 2
 
@@ -104,6 +117,11 @@ def make_sample_objects():
     weak_set = weakref.WeakSet()
     weak_set.add(slots_c)
 
+    mutated_key = MutableHashKey()
+    mutated_key_dict = {mutated_key: 'stale-bucket'}
+    # hash changed after insertion: iteration works, lookup by key raises KeyError
+    mutated_key.value = 99
+
     global GO_NESTED
     GO_NESTED = types.SimpleNamespace(
         level1=types.SimpleNamespace(
@@ -125,6 +143,7 @@ def make_sample_objects():
         'bound_method': bound_method,
         'generator': generator,
         'weak_set': weak_set,
+        'mutated_key_dict': mutated_key_dict,
         'go_nested': GO_NESTED,
     }
 

@@ -77,6 +77,19 @@ class MisdirectingGetattribute:
         return object.__getattribute__(self, name)
 
 
+class MutableHashKey:
+    """Key whose hash changes when mutated (like openpyxl's StyleArray)."""
+
+    def __init__(self, value=0):
+        self.value = value
+
+    def __hash__(self):
+        return hash(self.value)
+
+    def __eq__(self, other):
+        return isinstance(other, MutableHashKey) and self.value == other.value
+
+
 def closing(a, b=1):
     c = 2
 
@@ -157,6 +170,11 @@ class ObjexTests(unittest.TestCase):
         weak_set = weakref.WeakSet()
         weak_set.add(slots_c)
 
+        mutated_key = MutableHashKey()
+        mutated_key_dict = {mutated_key: 'stale-bucket'}
+        # hash changed after insertion: iteration works, lookup by key raises KeyError
+        mutated_key.value = 99
+
         global GO_NESTED
         GO_NESTED = types.SimpleNamespace(
             level1=types.SimpleNamespace(
@@ -178,6 +196,7 @@ class ObjexTests(unittest.TestCase):
             'bound_method': bound_method,
             'generator': generator,
             'weak_set': weak_set,
+            'mutated_key_dict': mutated_key_dict,
             'go_nested': GO_NESTED,
         }
 
@@ -319,6 +338,13 @@ class ObjexTests(unittest.TestCase):
     def test_dump_graph_uses_resolved_dunder_dict_without_reaccess(self):
         with Reader(str(self.shared_analysis_path)) as reader:
             assert reader.find_type_by_name('MisdirectingGetattribute')
+
+    def test_dump_graph_survives_mutated_dict_keys(self):
+        # dict scrape must use items(), not keys() + __getitem__: a key whose
+        # hash changed after insertion (openpyxl StyleArray in the wild)
+        # iterates fine but raises KeyError on lookup
+        with Reader(str(self.shared_analysis_path)) as reader:
+            assert reader.find_type_by_name('MutableHashKey')
 
     @pytest.mark.slow
     @unittest.skipUnless(hasattr(os, 'fork'), 'requires os.fork')
