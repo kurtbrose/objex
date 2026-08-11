@@ -640,10 +640,15 @@ class _Writer:
             for obj, text in self.conn.execute(
                     "SELECT object, repr FROM object_repr WHERE object IN ({})".format(qs), chunk):
                 key_text[obj] = text.lower()
+        sensitive_key_obj_ids = set()
         for key_obj_id, dst in key_dsts:
             text = key_text.get(key_obj_id)
             if text is not None and any(p in text for p in _SENSITIVE_KEY_PATTERNS):
                 sensitive_dsts.add(dst)
+                sensitive_key_obj_ids.add(key_obj_id)
+        # keys themselves stay readable (even when aliased as a value
+        # elsewhere, e.g. CPython 3.14 interned-string self-mapping dicts)
+        sensitive_dsts -= sensitive_key_obj_ids
         # replace captured rows; length basis is object.len when present
         # (true pre-truncation length for str/bytes), else the repr length
         updates = []
