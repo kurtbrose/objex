@@ -6,6 +6,7 @@ try:
     import resource
 except ImportError:  # windows
     resource = None
+import reprlib
 import shutil
 import sys
 from socket import getfqdn
@@ -87,9 +88,17 @@ class _Writer:
     _TRACKED_TYPES = (types.ModuleType, types.FrameType, types.FunctionType, types.CodeType)
     _COMMIT_INTERVAL_OBJECTS = 10000
 
-    def __init__(self, conn, use_gc=False):
+    def __init__(self, conn, use_gc=False, values='none', value_limit=128, redact=True):
+        if values not in ('none', 'builtins', 'repr'):
+            raise ValueError("values must be one of 'none', 'builtins', 'repr'")
         self.conn = conn
         self.use_gc = use_gc
+        self.values = values
+        self.value_limit = value_limit
+        self.redact = redact
+        self._reprlib = reprlib.Repr()
+        self._reprlib.maxstring = value_limit
+        self._reprlib.maxother = value_limit
         gc.collect()  # try to minimize garbage
         # track these to separate out "extra" objects that are generated as part of
         # the object walking process
@@ -124,7 +133,7 @@ class _Writer:
         # self.times = []
 
     @classmethod
-    def write_to_path(cls, path, use_gc=False, use_wal=True):
+    def write_to_path(cls, path, use_gc=False, use_wal=True, values='none', value_limit=128, redact=True):
         '''create a new instance that will dump state to path (which shouldn't exist)'''
         conn = sqlite3.connect(path)
         conn.text_factory = str
@@ -136,12 +145,14 @@ class _Writer:
             num_collected = _gc_prep()
             conn.execute(
                 """
-                INSERT INTO meta (id, pid, hostname, memory_mb, gc_info, num_gcd_objects)
-                VALUES (0, ?, ?, ?, ?, ?)
+                INSERT INTO meta (id, pid, hostname, memory_mb, gc_info, num_gcd_objects, capture_values)
+                VALUES (0, ?, ?, ?, ?, ?, ?)
                 """,
-                (os.getpid(), getfqdn(), memory, '[{},{},{}]'.format(*gc.get_count()), num_collected))
-            writer = cls(conn, use_gc=use_gc)
+                (os.getpid(), getfqdn(), memory, '[{},{},{}]'.format(*gc.get_count()), num_collected, values))
+            writer = cls(conn, use_gc=use_gc, values=values, value_limit=value_limit, redact=redact)
             writer.add_all()
+            if writer.values != 'none' and writer.redact:
+                writer.redact_sensitive_values()
             writer.finish()
         except Exception:
             conn.close()
@@ -199,6 +210,8 @@ class _Writer:
                 in_gc_objects,
                 is_gc_tracked)
             )
+        if self.values != 'none':
+            self._maybe_capture_value(obj, obj_id)
         # all of these are pretty rare (maybe optimize?)
         if id(obj) not in self.type_id_map and (is_type or isinstance(obj, type)):
             obj_type_id = self.type_id_map[id(obj)] = len(self.type_id_map)
@@ -215,6 +228,50 @@ class _Writer:
             # ^ expected to be False > 99% of time
             self._handle_tracked_type(obj, obj_id)
         return obj_id
+
+    def _maybe_capture_value(self, obj, obj_id):
+        '''
+        capture a bounded repr of obj into object_repr, per self.values tier.
+
+        tier 'builtins' only touches exact builtin scalar types (C-level
+        repr, never runs user code); tier 'repr' additionally runs
+        reprlib.repr on everything else, which EXECUTES user __repr__
+        mid-dump -- accepted risk; fork isolation (spawn_dump) bounds the
+        blast radius to dump quality.
+        '''
+        limit = self.value_limit
+        obj_type = type(obj)
+        truncated = False
+        if obj_type in _VALUE_TYPES:
+            if obj_type is str or obj_type is bytes:
+                # slice BEFORE repr to bound cost on huge strings; repr adds
+                # quotes/escapes, so bound the text itself too
+                text = repr(obj[:limit])
+                truncated = len(obj) > limit or len(text) > limit
+                text = text[:limit]
+            elif obj_type is int:
+                try:
+                    text = repr(obj)
+                except ValueError:  # 3.11+ int_max_str_digits
+                    text = '<int ~{} bits>'.format(obj.bit_length())
+                truncated = len(text) > limit
+                text = text[:limit]
+            else:  # float, complex, bool
+                text = repr(obj)
+        elif self.values == 'repr':
+            try:
+                text = self._reprlib.repr(obj)
+            except Exception:  # user __repr__ may raise; skip, never fail the dump
+                return
+            truncated = len(text) > limit
+            text = text[:limit]
+        else:
+            return
+        # lone surrogates break sqlite's UTF-8 encode
+        text = text.encode('utf-8', 'backslashreplace').decode('utf-8')
+        self.execute(
+            "INSERT INTO object_repr (object, repr, truncated, redacted) VALUES (?, ?, ?, 0)",
+            (obj_id, text, int(truncated)))
 
     def _handle_tracked_type(self, obj, obj_id):
         '''
@@ -554,6 +611,65 @@ class _Writer:
                         (db_id, self._ensure_db_id(referent, refs=1)))
         self.ignore_ids.remove(id(sys._getframe()))
 
+    def redact_sensitive_values(self):
+        '''
+        replace object_repr rows for values sitting under sensitive-looking
+        edge labels with a length-bucketed placeholder. key objects (the
+        string 'password') stay readable -- the key is the clue, the value
+        is the secret. an object aliased under both a sensitive and an
+        innocent label is redacted: one sensitive inbound edge wins.
+        '''
+        sensitive_dsts = set()
+        key_dsts = []  # (key_obj_id, dst) pairs from dict-key edges
+        for dst, ref in self.conn.execute("SELECT dst, ref FROM reference"):
+            if not isinstance(ref, str):  # list-index edges from enumerate
+                continue
+            if ref.startswith('@'):  # dict-key edge, format '@<key_obj_id>'
+                key_dsts.append((int(ref[1:]), dst))
+                continue
+            ref_lower = ref.lower()
+            if any(p in ref_lower for p in _SENSITIVE_KEY_PATTERNS):
+                sensitive_dsts.add(dst)
+        # dict keys: a key whose captured repr text matches the patterns
+        # marks its dst sensitive; keys with no captured value can't match
+        key_text = {}
+        key_ids = list({key_obj_id for key_obj_id, _ in key_dsts})
+        for i in range(0, len(key_ids), 800):
+            chunk = key_ids[i:i + 800]
+            qs = ', '.join(['?'] * len(chunk))
+            for obj, text in self.conn.execute(
+                    "SELECT object, repr FROM object_repr WHERE object IN ({})".format(qs), chunk):
+                key_text[obj] = text.lower()
+        sensitive_key_obj_ids = set()
+        for key_obj_id, dst in key_dsts:
+            text = key_text.get(key_obj_id)
+            if text is not None and any(p in text for p in _SENSITIVE_KEY_PATTERNS):
+                sensitive_dsts.add(dst)
+                sensitive_key_obj_ids.add(key_obj_id)
+        # keys themselves stay readable (even when aliased as a value
+        # elsewhere, e.g. CPython 3.14 interned-string self-mapping dicts)
+        sensitive_dsts -= sensitive_key_obj_ids
+        # replace captured rows; length basis is object.len when present
+        # (true pre-truncation length for str/bytes), else the repr length
+        updates = []
+        dst_ids = list(sensitive_dsts)
+        for i in range(0, len(dst_ids), 800):
+            chunk = dst_ids[i:i + 800]
+            qs = ', '.join(['?'] * len(chunk))
+            for obj, text, length in self.conn.execute(
+                    """
+                    SELECT object_repr.object, object_repr.repr, object.len
+                    FROM object_repr JOIN object ON object_repr.object = object.id
+                    WHERE object_repr.object IN ({})
+                    """.format(qs), chunk):
+                n = length if length is not None else len(text)
+                updates.append(('<redacted len<={}>'.format(_len_bucket(n)), obj))
+        if updates:
+            self.executemany(
+                "UPDATE object_repr SET repr = ?, truncated = 0, redacted = 1 WHERE object = ?",
+                updates)
+        self.conn.commit()
+
     def finish(self):
         self.conn.execute(
             "UPDATE meta SET duration_s = ?",
@@ -577,17 +693,47 @@ _SPECIAL_TYPES = set([
 _GC_COMPLETE_TYPES = frozenset([
     dict, list, tuple, set, frozenset, collections.deque, collections.defaultdict])
 
+# exact types only: C-level repr, never runs user code (subclasses excluded)
+_VALUE_TYPES = (str, bytes, int, float, complex, bool)
 
-def dump_graph(path, print_info=False, use_gc=False):
+_SENSITIVE_KEY_PATTERNS = (
+    # merged from ffcore.redact_sensitive_data defaults and Sentry
+    # server-side scrubbing defaults
+    'key', 'secret', 'passphrase', 'password', 'passwd', 'pwd',
+    'token', 'auth', 'credential', 'session', 'private',
+)
+
+
+def _len_bucket(n):
+    '''smallest bucket >= n from the series 100, 500, 1000, 5000, 10000, ...'''
+    bucket, step_five = 100, True
+    while bucket < n:
+        bucket *= 5 if step_five else 2
+        step_five = not step_five
+    return bucket
+
+
+def dump_graph(path, print_info=False, use_gc=False, values='none', value_limit=128, redact=True):
     '''
     dump a collection db to path;
     the collection db is designed to be small
     and write fast, so it needs post-processing
     to e.g. add indices and compute values
     before analysis
+
+    values -- value-capture tier: 'none' (default; no object values stored),
+    'builtins' (bounded reprs of exact builtin scalars: str, bytes, int,
+    float, complex, bool), or 'repr' (builtins plus reprlib.repr of
+    everything else; runs user __repr__ mid-dump -- prefer spawn_dump for
+    fork isolation)
+    value_limit -- max stored repr length per object (default 128)
+    redact -- when capturing values, replace values under sensitive-looking
+    keys ('secret', 'token', ...) with a length-bucketed placeholder
+    (default True)
     '''
     start = time.time()
-    _Writer.write_to_path(path, use_gc=use_gc)
+    _Writer.write_to_path(path, use_gc=use_gc, values=values,
+                          value_limit=value_limit, redact=redact)
     if print_info:
         duration = time.time() - start
         memory = _get_memory_mb()
@@ -609,7 +755,7 @@ def dump_graph(path, print_info=False, use_gc=False):
     return
 
 
-def spawn_dump(path, print_info=False, use_gc=False):
+def spawn_dump(path, print_info=False, use_gc=False, values='none', value_limit=128, redact=True):
     if not hasattr(os, 'fork'):
         raise NotImplementedError('spawn_dump() requires os.fork() support')
 
@@ -618,7 +764,8 @@ def spawn_dump(path, print_info=False, use_gc=False):
         return pid
 
     try:
-        dump_graph(path, print_info=print_info, use_gc=use_gc)
+        dump_graph(path, print_info=print_info, use_gc=use_gc,
+                   values=values, value_limit=value_limit, redact=redact)
     except BaseException:
         os._exit(1)
     os._exit(0)

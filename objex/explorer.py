@@ -20,6 +20,9 @@ except ImportError:
 from .schema import _INDICES
 from .dbutils import _run_ddl
 
+# display cap for repr snippets appended to object labels
+_LABEL_REPR_LIMIT = 40
+
 
 class InvalidDatabaseError(ValueError):
     pass
@@ -1040,6 +1043,10 @@ class Reader:
             name = 'frame ' + self.frame_codename(obj_id)
         else:
             name = self.obj_typequalname(obj_id)
+            value = self.obj_repr(obj_id)
+            if value is not None:
+                name = '{} {}'.format(
+                    name, value if len(value) <= _LABEL_REPR_LIMIT else value[:_LABEL_REPR_LIMIT - 1] + '…')
         return '<{}{}#{}>'.format(name, mark_label, obj_id)
 
     def obj_attributed_size(self, obj_id):
@@ -1049,6 +1056,15 @@ class Reader:
             'SELECT attributed_size FROM object_attributed_size WHERE object = ?',
             (obj_id,),
             default=self.obj_size(obj_id),
+        )
+
+    def obj_repr(self, obj_id):
+        if 'object_repr' not in self._table_names:
+            return None
+        return self.sql_val(
+            'SELECT repr FROM object_repr WHERE object = ?',
+            (obj_id,),
+            default=None,
         )
 
     def object_summary(self, obj_id):
@@ -1066,6 +1082,7 @@ class Reader:
             'refcount': refcount,
             'refcount_display': self.format_refcount(refcount),
             'len': self.obj_len(obj_id),
+            'repr': self.obj_repr(obj_id),
             'marks': self.get_marks(obj_id),
             'flags': {
                 'is_type': bool(self.obj_is_type(obj_id)),
@@ -1380,6 +1397,10 @@ class Console(Cmd):
             name = "frame " + self.reader.frame_codename(obj_id)
         else:
             name = self.reader.obj_typequalname(obj_id)
+            value = self.reader.obj_repr(obj_id)
+            if value is not None:
+                name = "{} {}".format(
+                    name, value if len(value) <= _LABEL_REPR_LIMIT else value[:_LABEL_REPR_LIMIT - 1] + '…')
             coloring = lambda s: colored(s, 'red')
         return coloring("<{}{}#{}>".format(name, mark_label, obj_id))
 
